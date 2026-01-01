@@ -1,6 +1,4 @@
-<<<<<<< HEAD
-A Simple repo for learning Maldev in Rust...
-
+A Repo for learning Maldev in Rust...
 ### Running rust file
 
 #### Method-1
@@ -13,6 +11,3 @@ cargo new helloworld
 cd helloworld 
 cargo run
 ```
-=======
-A repo for learning Maldev in Rust...
->>>>>>> 66c8cb41784d527ead57bb4b578c5b04bee587f6
