@@ -37,9 +37,9 @@ rustup install stable-i686-pc-windows-gnu
 rustup default stable-i686-pc-windows-gnu
 ```
 
-### Rust Basics
+## Rust Basics
 
-## Variables
+### Variables
 - Variables are memory locations that store values.
 - Values can be integers, floats, characters, or floating point numbers.
 - `let` is the predefined keyword to declare a variable.
@@ -107,4 +107,94 @@ let init: char = 'T';
 let flag = true;
 let is_active: bool = false;
 println!("Flag value: {}", flag);
+```
+
+### Operations
+- Operations in Rust include:
+  - **Arithmetic**: Addition (`+`), Subtraction (`-`), Multiplication (`*`), Division (`/`), Modulo (`%`)
+  - **Bitwise**: OR (`|`), AND (`&`), NOT (`!`)
+  - **Comparison**: Greater than (`>`), Less than (`<`), Equal to (`==`), Greater than or equal (`>=`), Less than or equal (`<=`)
+    ```rust
+    let a = 100;
+    let b = 50;
+    let c = 25;
+
+    let mut d = 0;
+
+    d = a + b;
+    d = a - b;
+    // Shorthand notation
+    d *= 100; // d = d * 100
+    d /= 100; // d = d / 100
+
+    println!("{}", a | b);
+    println!("{}", a & b);
+    println!("{}", !b);
+    println!("{}", a > b);
+    println!("{}", a < b);
+    println!("{}", a == b);
+    println!("{}", a <= b);
+    println!("{}", a >= b);
+    ```
+### Loops
+
+#### For Loops
+```rust
+// Right side value is not inclusive
+for i in 1..100 {
+    println!("i: {}", i);
+}
+
+// To include the right side value, use one of these:
+for i in 1..=100 {
+    println!("i: {}", i);
+}
+
+for i in 1..101 {
+    println!("i: {}", i);
+}
+```
+
+#### While Loop
+```rust
+let mut i = 0;
+while i < 101 {
+    println!("i value: {}", i);
+    i += 1;
+}
+```
+
+#### Loop (Infinite Loop)
+- The `loop` keyword creates an infinite loop that continues until explicitly broken.
+```rust
+let mut i = 0;
+loop {
+    if i == 100 {
+        break;
+    }
+    
+    println!("{}", i);
+    i += 1;
+}
+```
+### Conditions
+
+#### If-Else Statement
+```rust
+if a > b {
+    println!("A is greater than B");
+} else {
+    println!("B is greater than A");
+}
+```
+
+#### If-Else If-Else Statement
+```rust
+if a > b {
+    println!("a is greater than b");
+} else if a == b {
+    println!("a is equal to b");
+} else {
+    println!("b is greater than a");
+}
 ```
