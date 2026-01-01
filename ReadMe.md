@@ -1,5 +1,5 @@
 A Repo for learning Maldev in Rust...
-### Running rust file
+### Running rust code
 
 #### Method-1
 ```
