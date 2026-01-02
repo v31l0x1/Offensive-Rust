@@ -1,0 +1,8 @@
+[package]
+name = "shInject-Remote"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+winapi = { version = "0.3.9", features = ["memoryapi", "processthreadsapi", "errhandlingapi", "winuser", "synchapi"]}
+sysinfo = { version = "0.37.2"}
