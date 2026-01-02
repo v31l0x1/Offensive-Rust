@@ -100,5 +100,5 @@ fn main() {
 
     println!("{}", String::from_utf8_lossy(&u.iter().map(|&x| x as u8).collect::<Vec<u8>>()));
 
-    u.encode_utf16();
+    // u.encode_utf16();
 }
