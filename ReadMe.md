@@ -198,3 +198,72 @@ if a > b {
     println!("b is greater than a");
 }
 ```
+### Arrays
+```rust
+fn main(){
+    let l:[u8;5] = [5,6,7,8,9];
+
+    println!("{:#?}", l.as_ptr());
+
+    unsafe {
+        let temp = std::ptr::read(l.as_ptr() as *const u8);
+        println!("{}",temp);
+
+        let temp1 = std::ptr::read((l.as_ptr() as isize + 2 as isize) as *const u8);
+        println!("{}", temp1);
+    }
+
+    for i in 1..l.len(){
+        println!("{}",l[i]); // unsafe way
+
+        let res = l.get(i);
+
+        match res{
+            Some(value) => println!("{}", value),
+            None => {}
+        };
+    }
+
+    for i in 1..l.iter(){
+        println!("{}", i);
+    }
+
+    // modifying array
+    let mut l1:[u8;5] = [1,2,3,4,5];
+
+    for i in 1..l1.iter_mut() {
+        // *i = *i + 100;
+        println!("{}", i);
+    }
+}
+```
+- Arrays are fixed size, can't add or remove elements. Can't assign size of array dynamically.
+### Vector
+- Vector contains three parts address, length, capacity.
+- Address points to the starting element.
+- Length specifies the number of elements that particular vector has.
+- Capacity specified total number elements that vector can store.
+- When we add element to the vector using push function, if the capacity of the vector is reached we need to increase the capacity of the vector, then the complete vector is copied into new memory region. This makes vector operations slow.
+```rust
+let v1:Vec<i32> = vec![2,3,6,8,9];
+
+let v1:Vec<i32> = Vec::new();
+
+println!("{:#?}",v1);
+```
+### Strings
+```rust
+let name = "laptop";
+// is of type :&str
+for i in name.char(){
+    println!("{}",i);
+}
+```
+- Strings are also vectors, but it stores string slices.
+```rust
+let name = "laptop"; // is of type :&str
+let myname:String = String::from(name);
+println!("{}", myname);
+let myname2 = name.to_string();
+println!("{}", myname2);
+```
