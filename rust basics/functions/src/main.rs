@@ -1,22 +1,28 @@
+
+// fn print_line(phrase: &str) {
+//     println!("{}", phrase);
+// }
+
+// fn main() {
+//     print_line("Hello, world!");
+// }
+
 fn main() {
-    print_hello();
-    print_values(10, 20, 30);
 
-    let result = sum(15, 25);
-    println!("The sum is: {}", result);
+    let a = 48;
+    let b = 18;
+    println!("The greatest common divisor of {} and {} is {}", a, b, gcd(a, b));
 }
 
-fn print_hello() {
-    println!("Hello, world!");
-}
+fn gcd(mut a: u32, mut b: u32) -> u64 {
 
-fn print_values(a: i32, b: i32, c: i32){
-    println!("Values are: {}, {}, {}", a, b, c);
-}
-
-fn sum(a:i32, b:i32) -> i32 {
-    let sum: i32 = a + b;
-
-    // return sum;
-    sum
+    while a != 0 {
+        if a < b {
+            let c = a;
+            a = b;
+            b = c;
+        }
+        a = a % b;
+    }
+    b as u64
 }
