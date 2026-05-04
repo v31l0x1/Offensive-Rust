@@ -1,0 +1,16 @@
+[package]
+name = "RemoteMapViewInjection"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ntapi = "0.4.3"
+winapi = { version = "0.3", features = [
+    "memoryapi",
+    "processthreadsapi",
+    "handleapi",
+    "winbase",
+    "synchapi",
+    "errhandlingapi",
+    "tlhelp32",
+] }
