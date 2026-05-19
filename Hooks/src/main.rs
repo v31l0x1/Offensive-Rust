@@ -8,7 +8,7 @@ use winapi::{
         errhandlingapi::GetLastError,
         memoryapi::VirtualProtect,
         winnt::PAGE_EXECUTE_READWRITE,
-        winuser::{MB_OK, MessageBoxA},
+        winuser::{MB_OK, MessageBoxA, MessageBoxW},
     },
 };
 
@@ -145,6 +145,13 @@ fn initial_hook(
 
 fn my_meesagebox() {
     println!("[+] Hooked MessageBoxA called!");
+    unsafe {
+
+        let text: Vec<u16> = "Hooked MessageBoxA\0".encode_utf16().collect();
+        let Caption: Vec<u16> = "HOOK\0".encode_utf16().collect();
+
+        MessageBoxW(HWND::default(), text.as_ptr(), Caption.as_ptr(), MB_OK);
+    }
 }
 
 fn main() {
