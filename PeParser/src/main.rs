@@ -1,16 +1,20 @@
 use std::{
     char,
+    ffi::CStr,
     fs::{self, File},
     io::Read,
     ops::Add,
     str::from_utf8,
+    thread::current,
 };
 
 use std::process::exit;
 
 use winapi::um::winnt::{
-    IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_HEADERS, IMAGE_NT_SIGNATURE,
-    IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE, IMAGE_SECTION_HEADER,
+    IMAGE_DIRECTORY_ENTRY_EXPORT, IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_DOS_HEADER,
+    IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY, IMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR,
+    IMAGE_NT_HEADERS, IMAGE_NT_SIGNATURE, IMAGE_ORDINAL_FLAG, IMAGE_SCN_MEM_EXECUTE,
+    IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE, IMAGE_SECTION_HEADER, IMAGE_THUNK_DATA,
     PIMAGE_DOS_HEADER, PIMAGE_NT_HEADERS,
 };
 
@@ -38,7 +42,7 @@ fn hex_dump(bytes: &[u8]) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() < 3 {
+    if args.len() < 2 {
         eprintln!("Usage: {} <path_to_pe_file> --hex", args[0]);
         std::process::exit(1);
     }
@@ -135,6 +139,106 @@ fn main() {
                 (*section).PointerToRawData,
                 get_characteristics(&(*section))
             );
+        }
+
+        println!("\nExport Table:\n");
+
+        let export_directory_rva = (*nt_headers).OptionalHeader.DataDirectory
+            [IMAGE_DIRECTORY_ENTRY_EXPORT as usize]
+            .VirtualAddress;
+
+        println!(
+            "  {:<50} {:<10} {:<10} {:<10}",
+            "Function Name", "Ordinal", "RVA", "Address"
+        );
+        println!(
+            "  ------------------------------------------------------------------------------"
+        );
+
+        if export_directory_rva as u32 == 0 {
+            println!("[-] No export table found.");
+        } else {
+            let export_directory =
+                buffer.as_ptr().add(export_directory_rva as usize) as *const IMAGE_EXPORT_DIRECTORY;
+
+            let address_of_functions = buffer
+                .as_ptr()
+                .add((*export_directory).AddressOfFunctions as usize)
+                as *const u32;
+            let address_of_names = buffer
+                .as_ptr()
+                .add((*export_directory).AddressOfNames as usize)
+                as *const u32;
+            let address_of_name_ordinals = buffer
+                .as_ptr()
+                .add((*export_directory).AddressOfNameOrdinals as usize)
+                as *const u16;
+
+            for i in 0..(*export_directory).NumberOfNames as isize {
+                let function_name =
+                    buffer.as_ptr().add(*address_of_names.offset(i) as usize) as *const i8;
+
+                let oridinal = *address_of_name_ordinals.offset(i) as usize;
+
+                if oridinal >= (*export_directory).NumberOfFunctions as usize {
+                    continue;
+                }
+
+                let function_rva = *address_of_functions.add(oridinal) as usize;
+                let function_address = buffer.as_ptr().add(function_rva as usize);
+
+                let c_str = CStr::from_ptr(function_name);
+
+                if let Ok(function_str) = c_str.to_str() {
+                    println!(
+                        "  {:<50} {:<10} 0x{:08X} {:p}",
+                        function_str, i, function_rva, function_address
+                    );
+                }
+            }
+        }
+
+        println!("\nImport Table:\n");
+
+        let image_directory_rva = (*nt_headers).OptionalHeader.DataDirectory
+            [IMAGE_DIRECTORY_ENTRY_IMPORT as usize]
+            .VirtualAddress;
+
+        let mut image_directory =
+            buffer.as_ptr().add(image_directory_rva as usize) as *const IMAGE_IMPORT_DESCRIPTOR;
+
+        while (*image_directory).Name != 0 {
+            let dll_name_ptr = buffer.as_ptr().add((*image_directory).Name as usize);
+            let dll_name = CStr::from_ptr(dll_name_ptr as *const i8);
+            // println!("  {}", dll_name.to_str().unwrap_or("Invalid UTF-8"));
+            // println!("    Function: ");
+            println!("  [{}]", dll_name.to_str().unwrap_or("Invalid UTF-8"));
+            // println!("    {:<50}", "Function Names");
+            print!("  -----------------------------------------------------\n");
+
+            let original_first_thunk = *(*image_directory).u.OriginalFirstThunk();
+
+            if original_first_thunk != 0 {
+                let mut thunk =
+                    buffer.as_ptr().add(original_first_thunk as usize) as *const IMAGE_THUNK_DATA;
+
+                while *(*thunk).u1.AddressOfData() != 0 {
+                    if *(*thunk).u1.Ordinal() & IMAGE_ORDINAL_FLAG != 0 {
+                        let oridinal = *(*thunk).u1.Ordinal() & 0xFFFF;
+                        println!("      Ordinal: {}", oridinal);
+                    } else {
+                        let image_by_name_ptr =
+                            buffer.as_ptr().add(*(*thunk).u1.AddressOfData() as usize);
+                        let import_by_name = image_by_name_ptr as *const IMAGE_IMPORT_BY_NAME;
+                        let func_name =
+                            CStr::from_ptr((*import_by_name).Name.as_ptr() as *const i8);
+                        println!("    {}", func_name.to_str().unwrap_or("Invalid UTF-8"));
+                    }
+                    thunk = thunk.add(1);
+                }
+            }
+
+            image_directory = image_directory.add(1);
         }
     }
 }
