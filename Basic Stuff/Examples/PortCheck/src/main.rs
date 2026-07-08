@@ -34,7 +34,7 @@ fn scan_port(host: &str, port: u16, timeout: Duration) {
 
     // println!("Port {} ({}) is {}", port, service, status);
 }
-
+ 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
