@@ -14,11 +14,32 @@ use winapi::um::winnt::{
     PIMAGE_DOS_HEADER, PIMAGE_NT_HEADERS,
 };
 
+fn hex_dump(bytes: &[u8]) {
+    for (i, chunk) in bytes.chunks(16).enumerate() {
+        print!("{:08X}: ", i * 16);
+        for byte in chunk {
+            print!("{:02X} ", byte);
+        }
+        for _ in 0..(16 - chunk.len()) {
+            print!("   ");
+        }
+        print!("|");
+        for byte in chunk {
+            if byte.is_ascii_graphic() || *byte == b' ' {
+                print!("{}", *byte as char);
+            } else {
+                print!(".");
+            }
+        }
+        println!("|");
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() != 2 {
-        eprintln!("Usage: {} <path_to_pe_file>", args[0]);
+    if args.len() < 3 {
+        eprintln!("Usage: {} <path_to_pe_file> --hex", args[0]);
         std::process::exit(1);
     }
 
@@ -41,6 +62,12 @@ fn main() {
     if buffer.len() < 64 {
         eprintln!("Error: File is too small to be a valid PE file.");
         std::process::exit(1);
+    }
+
+    if args.get(2) == Some(&"--hex".to_string()) {
+        println!("Hex dump of the file:");
+        hex_dump(&buffer);
+        return;
     }
 
     unsafe {
