@@ -3,11 +3,12 @@ use std::{char, ffi::CStr, fs::File, io::Read, str::from_utf8};
 use std::process::exit;
 
 use winapi::um::winnt::{
-    IMAGE_DIRECTORY_ENTRY_EXPORT, IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_DOS_SIGNATURE,
-    IMAGE_EXPORT_DIRECTORY, IMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, IMAGE_NT_HEADERS,
-    IMAGE_NT_SIGNATURE, IMAGE_ORDINAL_FLAG, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ,
-    IMAGE_SCN_MEM_WRITE, IMAGE_SECTION_HEADER, IMAGE_THUNK_DATA, PIMAGE_DOS_HEADER,
-    PIMAGE_NT_HEADERS,
+    IMAGE_BASE_RELOCATION, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_DIRECTORY_ENTRY_EXPORT,
+    IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY,
+    IMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, IMAGE_NT_HEADERS, IMAGE_NT_SIGNATURE,
+    IMAGE_ORDINAL_FLAG, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE,
+    IMAGE_SECTION_HEADER, IMAGE_THUNK_DATA, PIMAGE_DOS_HEADER, PIMAGE_NT_HEADERS,
+    WinBuiltinUsersSid,
 };
 
 fn hex_dump(bytes: &[u8]) {
@@ -232,6 +233,145 @@ fn main() {
 
             image_directory = image_directory.add(1);
         }
+
+        println!("\nRelocation Table:\n");
+
+        let base_relocations_rva = (*nt_headers).OptionalHeader.DataDirectory
+            [IMAGE_DIRECTORY_ENTRY_BASERELOC as usize]
+            .VirtualAddress;
+
+        if base_relocations_rva == 0 {
+            println!("[-] No relocation table found.");
+            return;
+        }
+
+        if let Some(file_offset) = rva_to_file_offset(&buffer, base_relocations_rva) {
+            // println!(
+            //     "Relocation Table RVA: 0x{:X}, File Offset: 0x{:X}",
+            //     base_relocations_rva, file_offset
+            // );
+
+            if file_offset + size_of::<IMAGE_BASE_RELOCATION>() > buffer.len() {
+                println!("[-] Relocation table exceeds file size.");
+                return;
+            }
+
+            // FIXED: Use file_offset instead of base_relocations_rva
+            let mut base_relocation =
+                buffer.as_ptr().add(file_offset) as *const IMAGE_BASE_RELOCATION;
+
+            let delta =
+                (buffer.as_ptr() as usize) - ((*nt_headers).OptionalHeader.ImageBase as usize);
+
+            // println!(
+            //     "Original Image Base: 0x{:X}",
+            //     (*nt_headers).OptionalHeader.ImageBase
+            // );
+            // println!("New Image Base: 0x{:X}", buffer.as_ptr() as usize);
+            // println!("Delta: 0x{:X}", delta);
+
+            println!(
+                "  {:<15} {:<15} {:<10}",
+                "VirtualAddress", "SizeOfBlock", "Relocations"
+            );
+            println!("  -----------------------------------------------------");
+
+            while (*base_relocation).VirtualAddress != 0 {
+                // Check if we're still within bounds
+                let current_offset = (base_relocation as usize) - (buffer.as_ptr() as usize);
+                if current_offset + (*base_relocation).SizeOfBlock as usize > buffer.len() {
+                    println!(
+                        "[-] Relocation block exceeds file size at offset 0x{:X}",
+                        current_offset
+                    );
+                    break;
+                }
+
+                if (*base_relocation).SizeOfBlock >= size_of::<IMAGE_BASE_RELOCATION>() as u32 {
+                    let entries = ((*base_relocation).SizeOfBlock
+                        - size_of::<IMAGE_BASE_RELOCATION>() as u32)
+                        / 2;
+                    let rel_entries = base_relocation.add(1) as *const u16;
+
+                    for i in 0..entries {
+                        let rel_data = rel_entries.add(i as usize).read();
+                        if rel_data != 0 {
+                            let offset = rel_data & 0xFFF;
+                            let rtype = rel_data >> 12;
+
+                            if rtype == 0xA {
+                                // IMAGE_REL_BASED_DIR64
+                                let rva =
+                                    (*base_relocation).VirtualAddress as usize + offset as usize;
+
+                                if let Some(target_file_offset) =
+                                    rva_to_file_offset(&buffer, rva as u32)
+                                {
+                                    if target_file_offset + size_of::<usize>() <= buffer.len() {
+                                        let patch_addr =
+                                            buffer.as_ptr().add(target_file_offset) as *const usize;
+                                        let original_value = patch_addr.read();
+                                        let patched_value = original_value.wrapping_add(delta);
+
+                                        println!(
+                                            "  {:<15X} {:<15} {:<08X} -> {:<08X}",
+                                            (*base_relocation).VirtualAddress,
+                                            (*base_relocation).SizeOfBlock,
+                                            original_value,
+                                            patched_value
+                                        );
+                                    } else {
+                                        println!(
+                                            "  {:<15X} {:<15} [skipped - target out of bounds]",
+                                            (*base_relocation).VirtualAddress,
+                                            (*base_relocation).SizeOfBlock
+                                        );
+                                    }
+                                } else {
+                                    println!(
+                                        "  {:<15X} {:<15} [skipped - couldn't find target section]",
+                                        (*base_relocation).VirtualAddress,
+                                        (*base_relocation).SizeOfBlock
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Move to next relocation block
+                base_relocation = (base_relocation as *const u8)
+                    .add((*base_relocation).SizeOfBlock as usize)
+                    as *const IMAGE_BASE_RELOCATION;
+            }
+        } else {
+            println!("[-] Could not find relocation table in file!");
+        }
+    }
+}
+
+// Helper function to convert RVA to file offset
+fn rva_to_file_offset(buffer: &[u8], rva: u32) -> Option<usize> {
+    unsafe {
+        let dos_header = buffer.as_ptr() as *const IMAGE_DOS_HEADER;
+        let nt_headers =
+            buffer.as_ptr().add((*dos_header).e_lfanew as usize) as *const IMAGE_NT_HEADERS;
+        let sections = (nt_headers as *const u8).add(size_of::<IMAGE_NT_HEADERS>())
+            as *const IMAGE_SECTION_HEADER;
+        let num_sections = (*nt_headers).FileHeader.NumberOfSections;
+
+        for i in 0..num_sections as usize {
+            let section = sections.add(i);
+            let section_start = (*section).VirtualAddress;
+            let section_end = section_start + (*section).Misc.VirtualSize();
+
+            if rva >= section_start && rva < section_end {
+                let offset_in_section = rva - section_start;
+                let file_offset = (*section).PointerToRawData + offset_in_section;
+                return Some(file_offset as usize);
+            }
+        }
+        None
     }
 }
 
