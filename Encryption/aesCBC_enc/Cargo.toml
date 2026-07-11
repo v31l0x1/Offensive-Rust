@@ -1,0 +1,9 @@
+[package]
+name = "aesCBC_enc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aes = "0.9.1"
+cbc = { version = "0.2.1", features = ["alloc"] }
+rand = "0.10.2"
