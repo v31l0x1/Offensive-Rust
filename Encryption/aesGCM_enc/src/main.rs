@@ -1,6 +1,6 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
-use rand::{RngExt, rng};
+use rand::{rng, RngExt};
 
 #[allow(deprecated)]
 fn aes_encrypt(key: &[u8; 32], nonce: &[u8; 12], plaintext: &[u8]) -> Vec<u8> {
@@ -35,6 +35,17 @@ fn hex_dump(data: &[u8]) {
         print!("{:02x} ", byte);
     }
     println!();
+}
+
+fn print_rust_array(name: &str, data: &[u8]) {
+    print!("const {} = &[\n", name);
+    for (i, byte) in data.iter().enumerate() {
+        if i % 16 == 0 && i != 0 {
+            print!("\n");
+        }
+        print!("0x{:02x}, ", byte);
+    }
+    println!("\n]");
 }
 
 const SHELLCODE: &[u8] = &[
