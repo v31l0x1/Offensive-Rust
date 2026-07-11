@@ -33,7 +33,7 @@ fn xor(data: &mut [u8], key: &[u8]) {
 fn main() {
     let mut shellcode = SHELLCODE.to_vec();
 
-    print!("Original shellcode:");
+    print!("Encrypted shellcode:");
     hex_dump(&shellcode);
 
     xor(&mut shellcode, KEY);
