@@ -1,0 +1,16 @@
+[package]
+name = "resouce_sec"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+] }
+
+[build-dependencies]
+embed-resource = "3.0.11"
