@@ -18,14 +18,14 @@ def xor(data, key):
 def printCiphertext(ciphertext):
     print(
         "const SHELLCODE: &[u8] = &[ 0x"
-        + ", 0x".join(hex(ord(x))[2:] for x in ciphertext)
+        + ", 0x".join(f"{ord(x):02x}" for x in ciphertext)
         + " ];"
     )
 
 def print_key(key):
     print(
         "const KEY: &[u8] = &[ 0x"
-        + ", 0x".join(hex(ord(x))[2:] for x in key)
+        + ", 0x".join(f"{ord(x):02x}" for x in key)
         + " ];"
     )
 
