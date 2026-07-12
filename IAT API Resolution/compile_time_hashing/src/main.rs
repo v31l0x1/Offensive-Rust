@@ -1,3 +1,19 @@
+macro_rules! wide {
+    ($string:literal) => {{
+        const WIDE: usize = $string.len();
+        const fn encode<const WIDE: usize>(string: &str) -> [u16; WIDE] {
+            let mut wide: [u16; WIDE] = [0; WIDE];
+            let mut i = 0;
+            while i < WIDE {
+                wide[i] = string.as_bytes()[i] as u16;
+                i += 1;
+            }
+            wide
+        }
+        encode::<WIDE>($string)
+    }};
+}
+
 pub const fn ror_13_ansi(buf: &[u8]) -> u32 {
     let mut result: u32 = 0;
     let mut i = 0;
@@ -44,4 +60,6 @@ fn main() {
 
     println!("NTDLL_ANSI: {:#X}", ntdll_ansi);
     println!("NTDLL_WIDE: {:#X}", ntdll_wide);
+
+    println!("NTDLL: {:#X}", ror_13_wide(&wide!("ntdll.dll")));
 }
