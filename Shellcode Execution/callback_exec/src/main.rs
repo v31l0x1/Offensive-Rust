@@ -20,6 +20,7 @@ Usable Callback Functions:
     7. EnumThreadWindows
     8. EnumTimeFormatsA
     9. EnumPropsExA
+    10. CryptCATCDFOpen
 
 https://github.com/aahmad097/AlternativeShellcodeExec
 */
