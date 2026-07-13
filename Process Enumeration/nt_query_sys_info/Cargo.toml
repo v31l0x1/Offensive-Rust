@@ -1,0 +1,10 @@
+[package]
+name = "nt_query_sys_info"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Wdk_System_SystemInformation",
+    "Win32_System_WindowsProgramming",
+] }
