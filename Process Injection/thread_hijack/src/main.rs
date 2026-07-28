@@ -7,17 +7,17 @@ use windows_sys::{
         Foundation::{CloseHandle, STATUS_INFO_LENGTH_MISMATCH},
         System::{
             Diagnostics::Debug::{
-                CONTEXT, CONTEXT_CONTROL_AMD64, GetThreadContext, SetThreadContext,
-                WriteProcessMemory,
+                GetThreadContext, SetThreadContext, WriteProcessMemory, CONTEXT,
+                CONTEXT_CONTROL_AMD64,
             },
             Memory::{
-                MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, PAGE_READWRITE, VirtualAllocEx,
-                VirtualProtectEx,
+                VirtualAllocEx, VirtualProtectEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ,
+                PAGE_READWRITE,
             },
             Threading::{
-                OpenProcess, OpenThread, PROCESS_CREATE_THREAD, PROCESS_QUERY_INFORMATION,
-                PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE, ResumeThread,
-                SuspendThread, THREAD_GET_CONTEXT, THREAD_QUERY_INFORMATION, THREAD_SET_CONTEXT,
+                OpenProcess, OpenThread, ResumeThread, SuspendThread, PROCESS_CREATE_THREAD,
+                PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
+                THREAD_GET_CONTEXT, THREAD_QUERY_INFORMATION, THREAD_SET_CONTEXT,
                 THREAD_SUSPEND_RESUME,
             },
             WindowsProgramming::{SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION},
