@@ -1,0 +1,18 @@
+[package]
+name = "mod_stomp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+windows-sys = {version = "0.61.2", features = [
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Diagnostics_Debug",
+    "Wdk_System_SystemInformation",
+    "Win32_System_WindowsProgramming",
+    "Win32_Security",
+    "Win32_System_ProcessStatus",
+    "Win32_System_SystemServices",
+    "Win32_System_SystemInformation",
+]}
