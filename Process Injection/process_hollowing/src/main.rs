@@ -279,6 +279,5 @@ fn main() {
             println!("[-] Failed to resume thread");
             return;
         }
-        WaitForSingleObject(pi.hThread, 0xFFFFFFFF);
     }
 }
