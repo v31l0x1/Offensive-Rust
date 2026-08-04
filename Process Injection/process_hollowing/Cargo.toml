@@ -12,5 +12,6 @@ windows-sys = {version = "0.61.2", features = [
     "Win32_System_Diagnostics_Debug",
     "Wdk_System_Memory",
     "Win32_System_SystemServices",
-    "Win32_System_SystemInformation"
+    "Win32_System_SystemInformation",
+    "Win32_System_Memory",
 ]}

