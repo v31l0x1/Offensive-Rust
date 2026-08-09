@@ -46,47 +46,6 @@ struct CascadePattern {
     pc_offset: u8,
 }
 
-// fn pe_section_base(module_base: *mut c_void, section_name: &str) -> *mut c_void {
-//     unsafe {
-//         let dos_header = module_base as *const IMAGE_DOS_HEADER;
-
-//         if dos_header.read().e_magic != IMAGE_DOS_SIGNATURE {
-//             println!("[-] Invalid DOS signature");
-//             return null_mut();
-//         }
-
-//         let nt_headers = (module_base as *const u8).add(dos_header.read().e_lfanew as usize)
-//             as *const IMAGE_NT_HEADERS64;
-
-//         if nt_headers.read().Signature != IMAGE_NT_SIGNATURE {
-//             println!("[-] Invalid NT signature");
-//             return null_mut();
-//         }
-
-//         let first_section = (nt_headers as *const u8).add(size_of::<IMAGE_NT_HEADERS64>())
-//             as *const IMAGE_SECTION_HEADER;
-
-//         for i in 0..nt_headers.read().FileHeader.NumberOfSections {
-//             if section_name.eq_ignore_ascii_case(
-//                 from_utf8(&(*first_section.add(i as usize)).Name)
-//                     .unwrap()
-//                     .trim_end_matches('\0'),
-//             ) {
-//                 println!(
-//                     "[+] Found section {} at address: {:?}",
-//                     section_name,
-//                     (*first_section.add(i as usize)).VirtualAddress
-//                 );
-//                 return (module_base as *const u8)
-//                     .add((*first_section.add(i as usize)).VirtualAddress as usize)
-//                     as *mut c_void;
-//             }
-//         }
-//     }
-
-//     null_mut()
-// }
-
 fn rotr64(value: u64, shift: u64) -> u64 {
     let shift = shift & 63;
     (value >> shift) | (value << (64 - shift))
