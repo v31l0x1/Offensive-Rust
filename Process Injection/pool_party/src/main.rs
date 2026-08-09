@@ -15,7 +15,6 @@ use windows_sys::Win32::{
     },
     System::{
         Diagnostics::Debug::WriteProcessMemory,
-        Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, VirtualAllocEx},
         Threading::{
             GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION,
             PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
