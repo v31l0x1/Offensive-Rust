@@ -1,0 +1,25 @@
+[package]
+name = "dll_proxy"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_System_SystemServices",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_Media",
+] }
+
+[profile.release]
+strip = true
+opt-level = "z"
+panic = "abort"
+lto = "fat"
+codegen-units = 1
+debug = false
+overflow-checks = false
