@@ -1,0 +1,201 @@
+use std::{
+    arch::global_asm,
+    ffi::CStr,
+    os::raw::c_void,
+    ptr::{null, null_mut},
+};
+
+use ntapi::{ntldr::LDR_DATA_TABLE_ENTRY, ntpebteb::PTEB};
+use windows_sys::Win32::System::{
+    Diagnostics::Debug::IMAGE_NT_HEADERS64,
+    SystemServices::{
+        IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY, IMAGE_NT_SIGNATURE,
+    },
+};
+
+global_asm!(
+    ".section .data
+    SSN: .word 0
+    Syscall_Addr: .quad 0
+
+    .section .text   
+    Sys_NtAllocateVirtualMemory:
+        mov r10, rcx
+        mov rax, [rip + SSN]
+        jmp [rip + Syscall_Addr]
+        ret
+    
+    Sys_NtWriteVirtualMemory:
+        mov r10, rcx
+        mov rax, [rip + SSN]
+        jmp [rip + Syscall_Addr]
+        ret
+
+    Sys_NtProtectVirtualMemory:
+        mov r10, rcx
+        mov rax, [rip + SSN]
+        jmp [rip + Syscall_Addr]
+        ret
+    "
+);
+
+unsafe extern "win64" {
+    fn Sys_NtAllocateVirtualMemory(
+        ProcessHandle: *mut c_void,
+        BaseAddress: *mut *mut c_void,
+        ZeroBits: usize,
+        RegionSize: *mut usize,
+        AllocationType: u32,
+        Protect: u32,
+    ) -> i32;
+    fn Sys_NtWriteVirtualMemory(
+        ProcessHandle: *mut c_void,
+        BaseAddress: *mut c_void,
+        Buffer: *mut c_void,
+        BufferSize: usize,
+        NumberOfBytesWritten: *mut usize,
+    ) -> i32;
+    fn Sys_NtProtectVirtualMemory(
+        ProcessHandle: *mut c_void,
+        BaseAddress: *mut *mut c_void,
+        RegionSize: *mut usize,
+        NewProtect: u32,
+        OldProtect: *mut u32,
+    ) -> i32;
+}
+
+unsafe extern "C" {
+    static mut SSN: u32;
+    static mut Syscall_Addr: *const c_void;
+}
+
+fn get_current_teb() -> PTEB {
+    let mut teb: PTEB = null_mut();
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        std::arch::asm!(
+            "mov {}, gs:[0x30]",
+            out(reg) teb
+        );
+        #[cfg(target_arch = "x86")]
+        std::arch::asm!(
+            "mov {}, fs:[0x18]",
+            out(reg) teb
+        );
+        teb
+    }
+}
+
+fn get_ssn(func_name: &str, syscall_addr: &mut *mut c_void) -> u32 {
+    unsafe {
+        let teb = get_current_teb();
+        let peb = (*teb).ProcessEnvironmentBlock;
+
+        let ldr_data_entry = ((*(*(*peb).Ldr).InMemoryOrderModuleList.Flink).Flink as *const u8)
+            .offset(-0x10) as *const LDR_DATA_TABLE_ENTRY;
+
+        let ntdll_base = (*ldr_data_entry).DllBase;
+
+        println!("ntdll.dll base address: {:p}", ntdll_base);
+
+        let dos_headers = ntdll_base as *const IMAGE_DOS_HEADER;
+
+        if (*dos_headers).e_magic != IMAGE_DOS_SIGNATURE {
+            println!("Invalid DOS signature");
+            return 0;
+        }
+
+        let nt_headers = (ntdll_base as *const u8).add((*dos_headers).e_lfanew as usize)
+            as *const IMAGE_NT_HEADERS64;
+
+        if (*nt_headers).Signature != IMAGE_NT_SIGNATURE {
+            println!("Invalid NT signature");
+            return 0;
+        }
+
+        let export_directory = (ntdll_base as *const u8)
+            .add((*nt_headers).OptionalHeader.DataDirectory[0].VirtualAddress as usize)
+            as *const IMAGE_EXPORT_DIRECTORY;
+
+        let address_of_functions = (ntdll_base as *const u8)
+            .add((*export_directory).AddressOfFunctions as usize)
+            as *const u32;
+        let address_of_names = (ntdll_base as *const u8)
+            .add((*export_directory).AddressOfNames as usize)
+            as *const u32;
+        let address_of_name_ordinals = (ntdll_base as *const u8)
+            .add((*export_directory).AddressOfNameOrdinals as usize)
+            as *const u16;
+
+        for i in 0..(*export_directory).NumberOfNames as isize {
+            let fun_name =
+                (ntdll_base as *const u8).add(*address_of_names.offset(i) as usize) as *const i8;
+
+            let ordinal = *address_of_name_ordinals.offset(i) as usize;
+
+            if ordinal >= (*export_directory).NumberOfFunctions as usize {
+                continue;
+            }
+
+            // let function_rva = *address_of_functions.offset(ordinal as isize);
+            let function_addr = (ntdll_base as *const u8).add(
+                *address_of_functions
+                    .offset((*address_of_name_ordinals.offset(i) as usize) as isize)
+                    as usize,
+            );
+
+            let c_str = CStr::from_ptr(fun_name);
+
+            if let Ok(function_name) = c_str.to_str() {
+                if func_name.eq_ignore_ascii_case(function_name) {
+                    println!(
+                        "[+] Found function: {} at address: {:p}",
+                        function_name, function_addr
+                    );
+
+                    let mut byte = 0;
+                    loop {
+                        let bytes = function_addr as *const u8;
+
+                        if *bytes.offset(byte) == 0x0f && *bytes.offset(byte + 1) == 0x05 {
+                            return 0;
+                        }
+
+                        if *bytes.offset(byte) == 0xc3 {
+                            return 0;
+                        }
+
+                        if *bytes.offset(byte) == 0x4c
+                            && *bytes.offset(byte + 1) == 0x8b
+                            && *bytes.offset(byte + 2) == 0xd1
+                            && *bytes.offset(byte + 3) == 0xb8
+                            && *bytes.offset(byte + 6) == 0x00
+                            && *bytes.offset(byte + 7) == 0x00
+                        {
+                            let low = *bytes.offset(byte + 4) as u32;
+                            let high = *bytes.offset(byte + 5) as u32;
+                            let ssn = (high << 8) | low;
+
+                            *syscall_addr = bytes.offset(byte + 18) as *mut c_void;
+
+                            return ssn;
+                        }
+
+                        byte += 1;
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+fn main() {
+    let mut syscall_addr: *mut c_void = null_mut();
+    let ssn = get_ssn("NtAllocateVirtualMemory", &mut syscall_addr);
+    println!("[+] NtAllocateVirtualMemory SSN: 0x{:X}", ssn);
+    println!(
+        "[+] NtAllocateVirtualMemory syscall address: {:p}",
+        syscall_addr
+    );
+}
