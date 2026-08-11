@@ -87,6 +87,7 @@ fn get_current_teb() -> PTEB {
 }
 
 fn get_ssn(func_name: &str, syscall_addr: &mut *mut c_void) -> u32 {
+    let mut ssn: u32 = 0;
     unsafe {
         let teb = get_current_teb();
         let peb = (*teb).ProcessEnvironmentBlock;
@@ -153,41 +154,33 @@ fn get_ssn(func_name: &str, syscall_addr: &mut *mut c_void) -> u32 {
                         function_name, function_addr
                     );
 
-                    let mut byte = 0;
-                    loop {
+                    for i in 0..32 {
                         let bytes = function_addr as *const u8;
 
-                        if *bytes.offset(byte) == 0x0f && *bytes.offset(byte + 1) == 0x05 {
-                            return 0;
-                        }
-
-                        if *bytes.offset(byte) == 0xc3 {
-                            return 0;
-                        }
-
-                        if *bytes.offset(byte) == 0x4c
-                            && *bytes.offset(byte + 1) == 0x8b
-                            && *bytes.offset(byte + 2) == 0xd1
-                            && *bytes.offset(byte + 3) == 0xb8
-                            && *bytes.offset(byte + 6) == 0x00
-                            && *bytes.offset(byte + 7) == 0x00
+                        if *bytes.offset(i) == 0x4c
+                            && *bytes.offset(1) == 0x8b
+                            && *bytes.offset(2) == 0xd1
+                            && *bytes.offset(3) == 0xb8
+                            && *bytes.offset(6) == 0x00
+                            && *bytes.offset(7) == 0x00
                         {
-                            let low = *bytes.offset(byte + 4) as u32;
-                            let high = *bytes.offset(byte + 5) as u32;
-                            let ssn = (high << 8) | low;
+                            let low = *bytes.offset(4) as u32;
+                            let high = *bytes.offset(5) as u32;
+                            ssn = (high << 8) | low;
 
-                            *syscall_addr = bytes.offset(byte + 18) as *mut c_void;
-
-                            return ssn;
+                            // return ssn;
                         }
 
-                        byte += 1;
+                        if *bytes.offset(i) == 0x0f && *bytes.offset(i + 1) == 0x05 {
+                            *syscall_addr = function_addr.offset(i) as *mut c_void;
+                            break;
+                        }
                     }
                 }
             }
         }
     }
-    0
+    return ssn;
 }
 
 fn main() {
