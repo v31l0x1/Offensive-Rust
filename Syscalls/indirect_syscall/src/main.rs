@@ -1,6 +1,6 @@
 use std::{arch::global_asm, ffi::CStr, os::raw::c_void, ptr::null_mut};
 
-use ntapi::{ntkeapi::ProfileLoadLinkedIssues, ntldr::LDR_DATA_TABLE_ENTRY, ntpebteb::PTEB};
+use ntapi::{ntldr::LDR_DATA_TABLE_ENTRY, ntpebteb::PTEB};
 use windows_sys::Win32::System::{
     Diagnostics::Debug::IMAGE_NT_HEADERS64,
     Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, PAGE_READWRITE},
