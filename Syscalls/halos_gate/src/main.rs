@@ -1,6 +1,5 @@
 use std::{
     ffi::CStr,
-    io::Bytes,
     ops::{Add, Sub},
     ptr::null_mut,
 };
