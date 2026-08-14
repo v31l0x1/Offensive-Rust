@@ -33,15 +33,9 @@ fn set_hwbp(thread_handle: *mut c_void, addr: *mut c_void, reg_index: u32) -> bo
             _ => return false,
         }
 
-        // let local_enable_bit = 1u64 << (reg_index * 2); // L0/L1/L2/L3
-        // let rw_shift = 16 + (reg_index as u64 * 4); // R/W bits
-        // let len_shift = 18 + (reg_index as u64 * 4); // LEN bits
+        let local_enable_bit = 1u64 << (reg_index * 2); // L0/L1/L2/L3
 
-        // context.Dr7 |= local_enable_bit;
-        // context.Dr7 &= !(0x3u64 << rw_shift); // R/W = 00 (execute)
-        // context.Dr7 &= !(0x3u64 << len_shift); // LEN = 00 (1 byte)
-
-        context.Dr7 |= 1u64 << (reg_index * 2); // Enable the breakpoint
+        context.Dr7 |= local_enable_bit; // Enable the breakpoint
         context.Dr7 &= !(0x3u64 << (16 + reg_index as u64 * 4)); // Set the breakpoint to trigger on execution
         context.Dr7 &= !(0x3u64 << (18 + reg_index as u64 * 4)); // Set the breakpoint size to 1 byte
 
