@@ -33,7 +33,9 @@ fn set_hwbp(thread_handle: *mut c_void, addr: *mut c_void, reg_index: u32) -> bo
             _ => return false,
         }
 
-        context.Dr7 |= 1u64 << (reg_index * 2); // Enable the breakpoint
+        let local_enable_bit = 1u64 << (reg_index * 2); // L0/L1/L2/L3
+
+        context.Dr7 |= local_enable_bit; // Enable the breakpoint
         context.Dr7 &= !(0x3u64 << (16 + reg_index as u64 * 4)); // Set the breakpoint to trigger on execution
         context.Dr7 &= !(0x3u64 << (18 + reg_index as u64 * 4)); // Set the breakpoint size to 1 byte
 
@@ -59,7 +61,12 @@ unsafe extern "system" fn exception_handler(exceptioninfo: *mut EXCEPTION_POINTE
                 let return_address = (*exceptioninfo).ContextRecord.read().Rip;
                 println!("Return address: {:X}", return_address);
 
-                (*exceptioninfo).ContextRecord.read().Rdx = "Hooked\0".as_ptr() as u64;
+                (*(*exceptioninfo).ContextRecord).Rdx = "Hooked\0".as_ptr() as u64;
+
+                println!(
+                    "Modified RDX to {:X}",
+                    (*(*exceptioninfo).ContextRecord).Rdx
+                );
 
                 // Set the Resume Flag (RF) to prevent re-triggering the breakpoint
                 (*(*exceptioninfo).ContextRecord).EFlags |= 0x10000;
