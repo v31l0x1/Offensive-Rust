@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 use std::{ffi::CStr, mem::transmute, os::raw::c_void, ptr::null_mut};
 
 use ntapi::{ntldr::LDR_DATA_TABLE_ENTRY, ntpebteb::PTEB};
@@ -6,12 +7,11 @@ use windows_sys::Win32::{
     System::{
         Diagnostics::Debug::{
             AddVectoredExceptionHandler, EXCEPTION_CONTINUE_EXECUTION, EXCEPTION_CONTINUE_SEARCH,
-            EXCEPTION_DEBUG_INFO, EXCEPTION_POINTERS, IMAGE_NT_HEADERS64,
+            EXCEPTION_POINTERS, IMAGE_NT_HEADERS64,
         },
         Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE},
         SystemServices::{
             IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY, IMAGE_NT_SIGNATURE,
-            SID_HASH_SIZE,
         },
     },
 };
