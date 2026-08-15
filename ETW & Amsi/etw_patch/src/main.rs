@@ -3,7 +3,7 @@ use std::os::raw::c_void;
 use windows_sys::Win32::System::{
     Diagnostics::Debug::WriteProcessMemory,
     LibraryLoader::{GetModuleHandleA, GetProcAddress},
-    Memory::{PAGE_EXECUTE_READWRITE, VirtualProtect},
+    // Memory::{PAGE_EXECUTE_READWRITE, VirtualProtect},
     Threading::GetCurrentProcess,
 };
 
@@ -26,10 +26,12 @@ fn main() {
 
         println!("[+] NtTraceEvent address: {:p}", nt_trace_event);
 
+        let mut org_bytes: Vec<u8> = Vec::new();
         println!("[!] Original Bytes: ");
         print!("\t");
         for i in 0..10 {
             let byte = *(nt_trace_event.offset(i) as *const u8);
+            org_bytes.push(byte);
             print!("{:02X} ", byte);
         }
         print!("\n");
@@ -75,5 +77,28 @@ fn main() {
             let byte = *(nt_trace_event.offset(i) as *const u8);
             print!("{:02X} ", byte);
         }
+        print!("\n");
+
+        println!("[+] Restoring original bytes...");
+
+        let mut bytes_written: usize = 0;
+        if !WriteProcessMemory(
+            GetCurrentProcess(),
+            nt_trace_event,
+            org_bytes.as_ptr() as _,
+            org_bytes.len(),
+            &mut bytes_written,
+        ) == 0
+        {
+            println!("[-] Failed to restore original bytes!");
+        }
+
+        println!("[!] Restored Bytes: ");
+        print!("\t");
+        for i in 0..10 {
+            let byte = *(nt_trace_event.offset(i) as *const u8);
+            print!("{:02X} ", byte);
+        }
+        print!("\n");
     }
 }
