@@ -1,4 +1,4 @@
-use std::{ffi::CStr, fs::File, io::Read, net::ToSocketAddrs, str::from_utf8};
+use std::{fs::File, io::Read, str::from_utf8};
 
 use windows_sys::Win32::System::{
     Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER, WriteProcessMemory},
