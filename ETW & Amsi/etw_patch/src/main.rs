@@ -39,17 +39,17 @@ fn main() {
             0xC3, // ret
         ];
 
-        let mut old_protect: u32 = 0;
-        if VirtualProtect(
-            nt_trace_event,
-            patch.len(),
-            PAGE_EXECUTE_READWRITE,
-            &mut old_protect,
-        ) == 0
-        {
-            println!("Failed to change memory protection\n");
-            return;
-        }
+        // let mut old_protect: u32 = 0;
+        // if VirtualProtect(
+        //     nt_trace_event,
+        //     patch.len(),
+        //     PAGE_EXECUTE_READWRITE,
+        //     &mut old_protect,
+        // ) == 0
+        // {
+        //     println!("Failed to change memory protection\n");
+        //     return;
+        // }
 
         let mut bytes_written: usize = 0;
         if !WriteProcessMemory(
@@ -63,9 +63,9 @@ fn main() {
             println!("[-] Failed to patch bytes!");
         }
 
-        if VirtualProtect(nt_trace_event, patch.len(), old_protect, &mut old_protect) == 0 {
-            println!("[-] Failed to restore memory protection!");
-        }
+        // if VirtualProtect(nt_trace_event, patch.len(), old_protect, &mut old_protect) == 0 {
+        //     println!("[-] Failed to restore memory protection!");
+        // }
 
         println!("[+] Successfully patched NtTraceEvent!");
 
