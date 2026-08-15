@@ -1,16 +1,12 @@
 #![allow(non_snake_case)]
 use std::{
-    ffi::{CStr, OsStr},
+    ffi::OsStr,
     mem::zeroed,
     os::{raw::c_void, windows::ffi::OsStrExt},
     ptr::null_mut,
     str::from_utf8,
 };
 
-use ntapi::{
-    ntmmapi::{NtUnmapViewOfSection, ViewShare},
-    ntpsapi::NtCurrentProcess,
-};
 use windows_sys::{
     Wdk::{
         Foundation::OBJECT_ATTRIBUTES,
@@ -44,6 +40,7 @@ unsafe extern "system" {
         AllocationType: u32,
         Win32Protect: u32,
     ) -> i32;
+    fn NtUnmapViewOfSection(ProcessHandle: *mut c_void, BaseAddress: *mut c_void) -> i32;
 }
 
 pub const fn NT_SUCCESS(nt_status: i32) -> bool {
@@ -105,7 +102,7 @@ fn main() {
             0,
             null_mut(),
             &mut view_size,
-            ViewShare,
+            2,
             0,
             PAGE_READONLY,
         );
@@ -151,7 +148,7 @@ fn main() {
                 );
 
                 let text_sec_addr =
-                    (base_addr as *const u8).add((*section).PointerToRawData as usize);
+                    (base_addr as *const u8).add((*section).VirtualAddress as usize);
                 let text_size = (*section).SizeOfRawData as usize;
 
                 let ntdll_virtual_addr =
