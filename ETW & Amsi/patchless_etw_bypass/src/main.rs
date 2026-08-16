@@ -3,13 +3,10 @@ use std::{mem::zeroed, os::raw::c_void, ptr::null_mut};
 use windows_sys::Win32::{
     Foundation::EXCEPTION_SINGLE_STEP,
     System::{
-        Diagnostics::{
-            Debug::{
-                AddVectoredExceptionHandler, CONTEXT, CONTEXT_DEBUG_REGISTERS_AMD64,
-                EXCEPTION_CONTINUE_EXECUTION, EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS,
-                GetThreadContext, SetThreadContext,
-            },
-            Etw::TraceEvent,
+        Diagnostics::Debug::{
+            AddVectoredExceptionHandler, CONTEXT, CONTEXT_DEBUG_REGISTERS_AMD64,
+            EXCEPTION_CONTINUE_EXECUTION, EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS,
+            GetThreadContext, SetThreadContext,
         },
         LibraryLoader::{GetModuleHandleA, GetProcAddress},
         Threading::GetCurrentThread,
