@@ -1,4 +1,4 @@
-use std::{io, os::raw::c_void, ptr::null_mut, time::Duration, vec};
+use std::{os::raw::c_void, ptr::null_mut, time::Duration, vec};
 
 use windows_sys::{
     Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation},
@@ -6,7 +6,6 @@ use windows_sys::{
         Foundation::{GENERIC_READ, GENERIC_WRITE, STATUS_INFO_LENGTH_MISMATCH},
         Storage::FileSystem::{
             CreateFileA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
-            RemoveDirectoryA,
         },
         System::{IO::DeviceIoControl, WindowsProgramming::SYSTEM_PROCESS_INFORMATION},
     },
