@@ -1,10 +1,4 @@
-use std::{
-    mem::zeroed,
-    num::FpCategory::Zero,
-    os::raw::c_void,
-    ptr::{null, null_mut},
-    str::from_utf8,
-};
+use std::{mem::zeroed, os::raw::c_void, ptr::null_mut, str::from_utf8};
 
 use windows_sys::Win32::System::{
     Diagnostics::Debug::{
@@ -14,8 +8,8 @@ use windows_sys::Win32::System::{
     ProcessStatus::{GetModuleInformation, MODULEINFO},
     SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE},
     Threading::{
-        CREATE_SUSPENDED, CreateProcessA, GetCurrentProcess, PROCESS_INFORMATION, ResumeThread,
-        STARTUPINFOA, TerminateProcess,
+        CREATE_SUSPENDED, CreateProcessA, GetCurrentProcess, PROCESS_INFORMATION, STARTUPINFOA,
+        TerminateProcess,
     },
 };
 
