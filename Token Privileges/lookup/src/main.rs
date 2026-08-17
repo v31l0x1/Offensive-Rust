@@ -1,12 +1,12 @@
-use std::{env::consts, ffi::CStr, mem::zeroed, ptr::null_mut, u32};
+use std::{ffi::CStr, mem::zeroed, ptr::null_mut, u32};
 
 use windows_sys::Win32::{
     Security::{
         Authorization::ConvertSidToStringSidA, GetSidSubAuthority, GetSidSubAuthorityCount,
         GetTokenInformation, LookupAccountSidA, LookupPrivilegeNameA, SE_PRIVILEGE_ENABLED,
         SE_PRIVILEGE_ENABLED_BY_DEFAULT, SE_PRIVILEGE_REMOVED, SE_PRIVILEGE_USED_FOR_ACCESS,
-        SECURITY_MANDATORY_LABEL_AUTHORITY, SID_NAME_USE, TOKEN_MANDATORY_LABEL, TOKEN_PRIVILEGES,
-        TOKEN_QUERY, TOKEN_USER, TokenIntegrityLevel, TokenPrivileges, TokenUser,
+        SID_NAME_USE, TOKEN_MANDATORY_LABEL, TOKEN_PRIVILEGES, TOKEN_QUERY, TOKEN_USER,
+        TokenIntegrityLevel, TokenPrivileges, TokenUser,
     },
     System::{
         SystemServices::{
@@ -16,6 +16,20 @@ use windows_sys::Win32::{
         Threading::{GetCurrentProcess, OpenProcessToken},
     },
 };
+
+fn get_privielge_attribute(attributes: u32) -> String {
+    if attributes & SE_PRIVILEGE_ENABLED != 0 {
+        return "Enabled".to_string();
+    } else if attributes & SE_PRIVILEGE_ENABLED_BY_DEFAULT != 0 {
+        return "Enabled by default".to_string();
+    } else if attributes & SE_PRIVILEGE_REMOVED != 0 {
+        return "Removed".to_string();
+    } else if attributes & SE_PRIVILEGE_USED_FOR_ACCESS != 0 {
+        return "Used for access".to_string();
+    }
+
+    "Disabled".to_string()
+}
 
 fn main() {
     unsafe {
@@ -166,18 +180,4 @@ fn main() {
             )
         }
     }
-}
-
-fn get_privielge_attribute(attributes: u32) -> String {
-    if attributes & SE_PRIVILEGE_ENABLED != 0 {
-        return "Enabled".to_string();
-    } else if attributes & SE_PRIVILEGE_ENABLED_BY_DEFAULT != 0 {
-        return "Enabled by default".to_string();
-    } else if attributes & SE_PRIVILEGE_REMOVED != 0 {
-        return "Removed".to_string();
-    } else if attributes & SE_PRIVILEGE_USED_FOR_ACCESS != 0 {
-        return "Used for access".to_string();
-    }
-
-    "Disabled".to_string()
 }
