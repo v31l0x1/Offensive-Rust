@@ -3,8 +3,10 @@ use std::{env::consts, ffi::CStr, mem::zeroed, ptr::null_mut, u32};
 use windows_sys::Win32::{
     Security::{
         Authorization::ConvertSidToStringSidA, GetSidSubAuthority, GetSidSubAuthorityCount,
-        GetTokenInformation, LookupAccountSidA, SECURITY_MANDATORY_LABEL_AUTHORITY, SID_NAME_USE,
-        TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER, TokenIntegrityLevel, TokenUser,
+        GetTokenInformation, LookupAccountSidA, LookupPrivilegeNameA, SE_PRIVILEGE_ENABLED,
+        SE_PRIVILEGE_ENABLED_BY_DEFAULT, SE_PRIVILEGE_REMOVED, SE_PRIVILEGE_USED_FOR_ACCESS,
+        SECURITY_MANDATORY_LABEL_AUTHORITY, SID_NAME_USE, TOKEN_MANDATORY_LABEL, TOKEN_PRIVILEGES,
+        TOKEN_QUERY, TOKEN_USER, TokenIntegrityLevel, TokenPrivileges, TokenUser,
     },
     System::{
         SystemServices::{
@@ -126,5 +128,56 @@ fn main() {
         };
 
         println!("[+] Integrity Level: {}", integrity_str);
+
+        let mut size = 0;
+        GetTokenInformation(token, TokenPrivileges, null_mut(), 0, &mut size);
+
+        let mut buffer = vec![0u8; size as usize];
+
+        if GetTokenInformation(
+            token,
+            TokenPrivileges,
+            buffer.as_mut_ptr() as _,
+            size,
+            &mut size,
+        ) == 0
+        {
+            println!("[-] Failed to get token privileges.");
+            return;
+        }
+
+        let token_privileges = &*(buffer.as_ptr() as *const TOKEN_PRIVILEGES);
+        let privileges_ptr = token_privileges.Privileges.as_ptr();
+
+        println!("[+] Current token privileges:");
+        for i in 0..token_privileges.PrivilegeCount as usize {
+            let mut privilege_name = vec![0u8; 256];
+            let mut size = privilege_name.len() as u32;
+
+            let luid_ptr = &(*privileges_ptr.add(i)).Luid;
+
+            LookupPrivilegeNameA(null_mut(), luid_ptr, privilege_name.as_mut_ptr(), &mut size);
+            println!(
+                "    {:30} {}",
+                CStr::from_ptr(privilege_name.as_ptr() as *const i8)
+                    .to_str()
+                    .unwrap(),
+                get_privielge_attribute((*privileges_ptr.add(i)).Attributes)
+            )
+        }
     }
+}
+
+fn get_privielge_attribute(attributes: u32) -> String {
+    if attributes & SE_PRIVILEGE_ENABLED != 0 {
+        return "Enabled".to_string();
+    } else if attributes & SE_PRIVILEGE_ENABLED_BY_DEFAULT != 0 {
+        return "Enabled by default".to_string();
+    } else if attributes & SE_PRIVILEGE_REMOVED != 0 {
+        return "Removed".to_string();
+    } else if attributes & SE_PRIVILEGE_USED_FOR_ACCESS != 0 {
+        return "Used for access".to_string();
+    }
+
+    "Disabled".to_string()
 }
