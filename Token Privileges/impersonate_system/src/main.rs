@@ -1,9 +1,4 @@
-use std::{
-    ffi::{CStr, OsStr},
-    mem::zeroed,
-    os::{raw::c_void, windows::ffi::OsStrExt},
-    ptr::null_mut,
-};
+use std::{ffi::CStr, mem::zeroed, os::raw::c_void, ptr::null_mut};
 
 use windows_sys::{
     Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation},
@@ -20,9 +15,7 @@ use windows_sys::{
         },
         System::{
             Threading::{
-                CREATE_NEW_CONSOLE, CreateProcessWithTokenW, GetCurrentProcess, LOGON_WITH_PROFILE,
-                OpenProcess, OpenProcessToken, PROCESS_INFORMATION, PROCESS_QUERY_INFORMATION,
-                STARTUPINFOW,
+                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
             },
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
