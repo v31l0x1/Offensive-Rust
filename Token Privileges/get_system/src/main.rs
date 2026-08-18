@@ -20,11 +20,9 @@ use windows_sys::{
             Threading::{
                 CREATE_NEW_CONSOLE, CreateProcessWithTokenW, GetCurrentProcess, LOGON_WITH_PROFILE,
                 OpenProcess, OpenProcessToken, PROCESS_INFORMATION, PROCESS_QUERY_INFORMATION,
-                STARTUPINFOA, STARTUPINFOW,
+                STARTUPINFOW,
             },
-            WindowsProgramming::{
-                SYSTEM_PROCESS_INFORMATION, TCP_REQUEST_QUERY_INFORMATION_EX32_XP,
-            },
+            WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
     },
 };
@@ -50,7 +48,7 @@ fn get_pid(proc_name: &str) -> u32 {
         }
 
         let buffer_size = return_length as usize;
-        let mut buffer: Vec<u8> = vec![0; buffer_size];
+        let buffer: Vec<u8> = vec![0; buffer_size];
 
         let status = NtQuerySystemInformation(
             SystemProcessInformation,
