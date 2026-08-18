@@ -1,5 +1,5 @@
 [package]
-name = "get_system"
+name = "impersonate_system"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,5 +8,6 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Threading",
     "Win32_Security",
     "Wdk_System_SystemInformation",
+    "Win32_Security_Authorization",
     "Win32_System_WindowsProgramming",
 ] }
