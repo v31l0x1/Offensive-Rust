@@ -1,45 +1,25 @@
-use std::{
-    mem::zeroed,
-    os::raw::c_void,
-    ptr::{null, null_mut},
-};
+use std::{mem::zeroed, os::raw::c_void, ptr::null_mut};
 
-use ntapi::{
-    ntpsapi::NtCreateProcessEx,
-    ntrtl::{
-        RTL_CLONE_PROCESS_FLAGS_CREATE_SUSPENDED, RTL_CLONE_PROCESS_FLAGS_INHERIT_HANDLES,
-        RTL_CLONE_PROCESS_FLAGS_NO_SYNCHRONIZE, RTLP_PROCESS_REFLECTION_REFLECTION_INFORMATION,
-        RtlCreateProcessReflection,
-    },
-};
+use ntapi::ntpsapi::NtCreateProcessEx;
 use windows_sys::{
     Wdk::System::SystemInformation::NtQuerySystemInformation,
     Win32::{
         Foundation::{
             CloseHandle, ERROR_NOT_ALL_ASSIGNED, GENERIC_WRITE, GetLastError, INVALID_HANDLE_VALUE,
-            STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS,
+            STATUS_INFO_LENGTH_MISMATCH,
         },
         Security::{
             AdjustTokenPrivileges, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
             TOKEN_QUERY,
         },
-        Storage::FileSystem::{
-            CREATE_ALWAYS, CreateFileA, FILE_ATTRIBUTE_NORMAL, PopIoRingCompletion,
-        },
+        Storage::FileSystem::{CREATE_ALWAYS, CreateFileA, FILE_ATTRIBUTE_NORMAL},
         System::{
-            Diagnostics::{
-                Debug::{
-                    CONTEXT_FULL_AMD64, MiniDumpWithFullMemory, MiniDumpWithFullMemoryInfo,
-                    MiniDumpWithThreadInfo, MiniDumpWriteDump,
-                },
-                ProcessSnapshotting::{
-                    PSS_CAPTURE_HANDLES, PSS_CAPTURE_THREAD_CONTEXT, PSS_CAPTURE_THREADS,
-                    PSS_CAPTURE_VA_CLONE, PSS_CREATE_BREAKAWAY_OPTIONAL, PssCaptureSnapshot,
-                },
+            Diagnostics::Debug::{
+                MiniDumpWithFullMemory, MiniDumpWithFullMemoryInfo, MiniDumpWriteDump,
             },
             Threading::{
                 GetCurrentProcess, GetProcessId, OpenProcess, OpenProcessToken, PROCESS_ALL_ACCESS,
-                PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, PROCESS_VM_WRITE, WaitForSingleObject,
+                PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
             },
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
