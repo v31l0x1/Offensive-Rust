@@ -11,11 +11,11 @@ use windows_sys::{
             AdjustTokenPrivileges, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
             TOKEN_QUERY,
         },
-        Storage::FileSystem::{CREATE_ALWAYS, CreateFileA, CreateFileW, FILE_ATTRIBUTE_NORMAL},
+        Storage::FileSystem::{CREATE_ALWAYS, CreateFileA, FILE_ATTRIBUTE_NORMAL},
         System::{
             Diagnostics::Debug::{
                 MiniDumpWithFullMemory, MiniDumpWithFullMemoryInfo, MiniDumpWithThreadInfo,
-                MiniDumpWriteDump, WriteProcessMemory,
+                MiniDumpWriteDump,
             },
             Threading::{
                 GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
