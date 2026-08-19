@@ -1,8 +1,4 @@
-use std::{
-    mem::zeroed,
-    os::raw::c_void,
-    ptr::{null, null_mut},
-};
+use std::{mem::zeroed, os::raw::c_void, ptr::null_mut};
 
 use windows_sys::{
     Wdk::System::SystemInformation::NtQuerySystemInformation,
