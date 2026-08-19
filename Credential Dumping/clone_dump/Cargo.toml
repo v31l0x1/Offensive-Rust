@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ntapi = "0.4.3"
 windows-sys = { version = "0.61.2", features = [
     "Wdk_System_SystemInformation",
     "Win32_System_WindowsProgramming",
