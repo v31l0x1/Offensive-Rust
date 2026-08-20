@@ -11,24 +11,19 @@ use windows_sys::{
             AdjustTokenPrivileges, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
             TOKEN_QUERY,
         },
-        Storage::FileSystem::{
-            CREATE_ALWAYS, CreateFileA, FILE_ATTRIBUTE_NORMAL, PopIoRingCompletion,
-        },
+        Storage::FileSystem::{CREATE_ALWAYS, CreateFileA, FILE_ATTRIBUTE_NORMAL},
         System::{
             Diagnostics::{
                 Debug::{
-                    CONTEXT_FULL_AMD64, MiniDumpWithFullMemory, MiniDumpWithFullMemoryInfo,
-                    MiniDumpWithThreadInfo, MiniDumpWriteDump,
+                    MiniDumpWithFullMemory, MiniDumpWithFullMemoryInfo, MiniDumpWithThreadInfo,
+                    MiniDumpWriteDump,
                 },
                 ProcessSnapshotting::{
                     PSS_CAPTURE_HANDLES, PSS_CAPTURE_THREAD_CONTEXT, PSS_CAPTURE_THREADS,
                     PSS_CAPTURE_VA_CLONE, PSS_CREATE_BREAKAWAY_OPTIONAL, PssCaptureSnapshot,
                 },
             },
-            Threading::{
-                GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_ALL_ACCESS,
-                PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
-            },
+            Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_ALL_ACCESS},
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
     },
