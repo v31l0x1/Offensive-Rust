@@ -1,4 +1,4 @@
-#![allow(deprecated, unused_assignments)]
+#![allow(deprecated, unused_assignments, unused)]
 use std::{
     fs::File, intrinsics::copy_nonoverlapping, io::Read, mem::zeroed, os::raw::c_void,
     process::exit, ptr::null_mut, str::from_utf8, sync::OnceLock,
@@ -96,9 +96,9 @@ unsafe extern "system" fn run_me(param: *mut c_void) -> u32 {
         for i in 0..(*nt_header).FileHeader.NumberOfSections {
             let section = sec_hdr.add(i as usize);
 
-            let name = from_utf8(&(*section).Name)
-                .unwrap()
-                .trim_matches(char::from(0));
+            // let name = from_utf8(&(*section).Name)
+            //     .unwrap()
+            //     .trim_matches(char::from(0));
 
             // println!("[+] Copying section: {} to memory", name);
 
