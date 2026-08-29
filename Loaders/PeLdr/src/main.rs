@@ -1,9 +1,13 @@
-use std::{fs::File, io::Read, os::raw::c_void, process::exit, ptr::null_mut, sync::OnceLock};
+use std::{
+    fs::File, intrinsics::copy_nonoverlapping, io::Read, os::raw::c_void, process::exit,
+    ptr::null_mut, str::from_utf8, sync::OnceLock,
+};
 
 use windows_sys::Win32::{
     Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle},
     System::{
-        Diagnostics::Debug::IMAGE_NT_HEADERS64,
+        Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER},
+        Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc},
         SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE},
         Threading::{
             CreateThread, GetCurrentProcess, GetCurrentThread, ResumeThread, SuspendThread,
@@ -13,6 +17,15 @@ use windows_sys::Win32::{
 };
 
 static BUFFER: OnceLock<Vec<u8>> = OnceLock::new();
+
+macro_rules! IMAGE_FIRST_SECTION {
+    ($ntheader:expr) => {{
+        let nt_hdr = $ntheader as *const IMAGE_NT_HEADERS64;
+        let optional_header_ptr = std::ptr::addr_of!((*nt_hdr).OptionalHeader) as usize;
+        let offset = (*nt_hdr).FileHeader.SizeOfOptionalHeader as usize;
+        (optional_header_ptr + offset) as *const IMAGE_SECTION_HEADER
+    }};
+}
 
 unsafe extern "system" fn run_me(param: *mut c_void) -> u32 {
     unsafe {
@@ -41,6 +54,49 @@ unsafe extern "system" fn run_me(param: *mut c_void) -> u32 {
         if (*nt_header).Signature != IMAGE_NT_SIGNATURE {
             println!("[-] Invalid NT signature");
             return 1;
+        }
+
+        let image_size = (*nt_header).OptionalHeader.SizeOfImage as usize;
+        let header_size = (*nt_header).OptionalHeader.SizeOfHeaders as usize;
+
+        let image_base = VirtualAlloc(
+            null_mut(),
+            image_size,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_READWRITE,
+        );
+
+        if image_base.is_null() {
+            println!("[-] Failed to allocate memory for image");
+            return 1;
+        }
+
+        copy_nonoverlapping(
+            BUFFER.get().unwrap().as_ptr(),
+            image_base as *mut u8,
+            header_size as usize,
+        );
+
+        let sec_hdr = IMAGE_FIRST_SECTION!(nt_header);
+
+        for i in 0..(*nt_header).FileHeader.NumberOfSections {
+            let section = sec_hdr.add(i as usize);
+
+            let name = from_utf8(&(*section).Name)
+                .unwrap()
+                .trim_matches(char::from(0));
+
+            println!("[+] Copying section: {} to memory", name);
+
+            copy_nonoverlapping(
+                BUFFER
+                    .get()
+                    .unwrap()
+                    .as_ptr()
+                    .add((*sec_hdr).PointerToRawData as usize),
+                (image_base as usize + (*section).VirtualAddress as usize) as *mut u8,
+                (*section).SizeOfRawData as usize,
+            );
         }
 
         ResumeThread(thread_handle);
