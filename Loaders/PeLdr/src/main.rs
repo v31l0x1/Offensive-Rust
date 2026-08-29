@@ -1,7 +1,7 @@
 #![allow(deprecated, unused_assignments)]
 use std::{
-    fs::File, intrinsics::copy_nonoverlapping, io::Read, mem::zeroed, num::FpCategory::Zero,
-    os::raw::c_void, process::exit, ptr::null_mut, str::from_utf8, sync::OnceLock, thread,
+    fs::File, intrinsics::copy_nonoverlapping, io::Read, mem::zeroed, os::raw::c_void,
+    process::exit, ptr::null_mut, str::from_utf8, sync::OnceLock,
 };
 
 use windows_sys::Win32::{
@@ -19,8 +19,8 @@ use windows_sys::Win32::{
             PAGE_WRITECOPY, VirtualAlloc, VirtualProtect,
         },
         SystemServices::{
-            COMPONENT_FILTER, IMAGE_BASE_RELOCATION, IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE,
-            IMAGE_IMPORT_BY_NAME, IMAGE_IMPORT_DESCRIPTOR, IMAGE_NT_SIGNATURE,
+            IMAGE_BASE_RELOCATION, IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_IMPORT_BY_NAME,
+            IMAGE_IMPORT_DESCRIPTOR, IMAGE_NT_SIGNATURE,
         },
         Threading::{
             CreateThread, GetCurrentProcess, GetCurrentThread, ResumeThread, SuspendThread,
@@ -171,10 +171,10 @@ unsafe extern "system" fn run_me(param: *mut c_void) -> u32 {
                 return 1;
             }
 
-            let p_names = match (*imp_desc).Anonymous.OriginalFirstThunk {
-                0 => image_base as usize + (*imp_desc).FirstThunk as usize,
-                _ => image_base as usize + (*imp_desc).Anonymous.OriginalFirstThunk as usize,
-            };
+            // let p_names = match (*imp_desc).Anonymous.OriginalFirstThunk {
+            //     0 => image_base as usize + (*imp_desc).FirstThunk as usize,
+            //     _ => image_base as usize + (*imp_desc).Anonymous.OriginalFirstThunk as usize,
+            // };
 
             let mut paddr =
                 (image_base as usize + (*imp_desc).FirstThunk as usize) as *mut IMAGE_THUNK_DATA64;
