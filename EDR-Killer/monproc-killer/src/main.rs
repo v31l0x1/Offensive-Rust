@@ -3,7 +3,9 @@ use std::{os::raw::c_void, ptr::null_mut, time::Duration, vec};
 use windows_sys::{
     Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation},
     Win32::{
-        Foundation::{GENERIC_READ, GENERIC_WRITE, STATUS_INFO_LENGTH_MISMATCH},
+        Foundation::{
+            GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE, STATUS_INFO_LENGTH_MISMATCH,
+        },
         Storage::FileSystem::{
             CreateFileA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
         },
@@ -85,7 +87,7 @@ fn kill_pid(pid: u32) -> bool {
             null_mut(),
         );
 
-        if device_handle.is_null() {
+        if device_handle == INVALID_HANDLE_VALUE {
             println!("[-] Failed to open device handle.");
             return false;
         }
@@ -137,6 +139,6 @@ fn main() {
             println!("Process name: {}, PID: {}", proc_name, pid);
             kill_pid(pid);
         }
-        std::thread::sleep(Duration::from_secs(20));
+        std::thread::sleep(Duration::from_secs(2));
     }
 }
