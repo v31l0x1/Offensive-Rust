@@ -1,4 +1,4 @@
-#![allow(non_snake_case, deprecated)]
+#![allow(non_snake_case, deprecated, non_upper_case_globals)]
 use retour::GenericDetour;
 use std::{mem::transmute, os::raw::c_void, ptr::null_mut, sync::OnceLock};
 use windows_sys::Win32::{
