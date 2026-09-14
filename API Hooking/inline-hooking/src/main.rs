@@ -1,3 +1,4 @@
+#![allow(non_snake_case, deprecated)]
 use std::{
     intrinsics::copy_nonoverlapping,
     mem::{transmute, zeroed},
@@ -10,7 +11,7 @@ use windows_sys::Win32::{
         LibraryLoader::{GetProcAddress, LoadLibraryA},
         Memory::{PAGE_EXECUTE_READWRITE, VirtualProtect},
     },
-    UI::WindowsAndMessaging::{MessageBoxA, MessageBoxW},
+    UI::WindowsAndMessaging::MessageBoxW,
 };
 
 type MessageBoxAFn = unsafe extern "system" fn(
@@ -90,8 +91,8 @@ fn rm_hook(hook: &mut Hook) -> bool {
 
 unsafe extern "system" fn HookedMessageBoxA(
     hwnd: *mut c_void,
-    lptext: *const u8,
-    lpcaption: *const u8,
+    _lptext: *const u8,
+    _lpcaption: *const u8,
     utype: u32,
 ) -> i32 {
     println!("[+] Hooked MessageBoxA called!");
