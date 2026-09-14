@@ -1,0 +1,12 @@
+[package]
+name = "inline-hooking"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_System_LibraryLoader",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Memory",
+] }
