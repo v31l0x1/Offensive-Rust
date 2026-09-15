@@ -1,24 +1,16 @@
 #![allow(non_snake_case)]
-use std::{
-    ffi::CStr,
-    mem::zeroed,
-    ops::Add,
-    os::raw::c_void,
-    ptr::{null, null_mut},
-};
+use std::{ffi::CStr, os::raw::c_void, ptr::null_mut};
 
 use windows_sys::Win32::{
     System::{
         Diagnostics::Debug::{IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_NT_HEADERS64},
         LibraryLoader::{GetModuleHandleA, LoadLibraryA},
         Memory::{PAGE_READWRITE, VirtualProtect},
-        SystemInformation::CacheInstruction,
         SystemServices::{
             IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_IMPORT_DESCRIPTOR, IMAGE_NT_SIGNATURE,
         },
-        Threading::{GetCurrentProcess, TryAcquireSRWLockShared},
     },
-    UI::WindowsAndMessaging::{MB_OK, MessageBoxA, MessageBoxExA, MessageBoxW},
+    UI::WindowsAndMessaging::{MB_OK, MessageBoxA, MessageBoxW},
 };
 
 unsafe extern "system" fn HookedMessageBoxA(
@@ -46,7 +38,7 @@ struct IATHook {
 
 fn iat_patch(iat_hook: *mut IATHook) -> bool {
     unsafe {
-        let mut hmodule = (*iat_hook).base_addr as *const c_void;
+        let hmodule = (*iat_hook).base_addr as *const c_void;
         let dos_header = hmodule as *const IMAGE_DOS_HEADER;
 
         if (*dos_header).e_magic != IMAGE_DOS_SIGNATURE {
