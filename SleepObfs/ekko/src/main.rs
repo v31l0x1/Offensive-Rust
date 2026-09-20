@@ -8,7 +8,7 @@ use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{CloseHandle, NTSTATUS};
 use windows_sys::Win32::System::Kernel::NotificationEvent;
 use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
-use windows_sys::Win32::System::Memory::{PAGE_EXECUTE_READ, PAGE_READWRITE};
+use windows_sys::Win32::System::Memory::{PAGE_EXECUTE_READWRITE, PAGE_READWRITE};
 use windows_sys::Win32::System::Threading::{
     EVENT_ALL_ACCESS, GetCurrentProcess, INFINITE, WT_EXECUTEINTIMERTHREAD, WT_EXECUTEONLYONCE,
 };
@@ -35,11 +35,15 @@ fn nt_success(status: NTSTATUS) -> bool {
 }
 
 #[repr(C)]
-struct STRING {
+struct USTRING {
     len: u32,
     max_len: u32,
     buffer: *mut u8,
 }
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+struct AlignedContext(CONTEXT);
 
 #[cfg(any(target_arch = "x86_64"))]
 fn gen_random() -> u32 {
@@ -52,7 +56,7 @@ fn gen_random() -> u32 {
 
 fn ekko(time: u32) {
     unsafe {
-        let mut ctx_init: CONTEXT = CONTEXT::default();
+        let mut ctx_init = AlignedContext(CONTEXT::default());
         let mut key: [u8; 16] = [0; 16];
         let mut queue: *mut c_void = null_mut();
         let mut timer: *mut c_void = null_mut();
@@ -68,13 +72,13 @@ fn ekko(time: u32) {
             (image_base as usize + (*dos_header).e_lfanew as usize) as *const IMAGE_NT_HEADERS64;
         let image_size = (*nt_header).OptionalHeader.SizeOfImage as usize;
 
+        println!("[+] Image base: {:p}", image_base);
+
         let kernel32 = LoadLibraryA("kernel32.dll\0".as_ptr() as *const u8);
-
         let ntdll = LoadLibraryA("ntdll.dll\0".as_ptr() as *const u8);
-
         let advapi32 = LoadLibraryA("advapi32.dll\0".as_ptr() as *const u8);
 
-        if advapi32.is_null() || ntdll.is_null() || kernel32.is_null() {
+        if kernel32.is_null() || ntdll.is_null() || advapi32.is_null() {
             println!("[-] Failed to load DLLs");
             return;
         }
@@ -90,7 +94,6 @@ fn ekko(time: u32) {
             GetProcAddress(ntdll, "NtContinue\0".as_ptr() as *const u8).unwrap() as *mut c_void;
         let rtl_capture_context = GetProcAddress(ntdll, "RtlCaptureContext\0".as_ptr() as *const u8)
             .unwrap() as *mut c_void;
-
         let systemfunction032 =
             GetProcAddress(advapi32, "SystemFunction032\0".as_ptr() as *const u8).unwrap()
                 as *mut c_void;
@@ -109,14 +112,13 @@ fn ekko(time: u32) {
         for i in 0..16 {
             key[i] = gen_random() as u8;
         }
-
-        let mut key_buffer: STRING = STRING {
+        let mut key_buffer = USTRING {
             len: 16,
             max_len: 16,
             buffer: key.as_mut_ptr(),
         };
 
-        let mut image: STRING = STRING {
+        let mut image = USTRING {
             len: image_size as u32,
             max_len: image_size as u32,
             buffer: image_base as *mut u8,
@@ -150,12 +152,12 @@ fn ekko(time: u32) {
             return;
         }
 
-        println!("[+] Starting sleep for {} milliseconds", time);
+        println!("[+] Sleeping for {} milliseconds", time);
 
         delay += 100;
         if nt_success(RtlCreateTimer(
             queue,
-            &mut timer as *mut _ as *mut _,
+            &mut timer,
             rtl_capture_context as *const _,
             &mut ctx_init as *mut _ as *const _,
             delay,
@@ -177,43 +179,43 @@ fn ekko(time: u32) {
                     return;
                 }
 
-                let mut ctx: [CONTEXT; 7] = [ctx_init; 7];
+                let mut ctx: [AlignedContext; 7] = [ctx_init; 7];
                 for i in 0..7 {
-                    ctx[i].Rsp -= 8;
+                    ctx[i].0.Rsp -= 8;
                 }
 
-                ctx[0].Rip = wait_for_single_object_ex as *const () as u64;
-                ctx[0].Rcx = event_start as u64;
-                ctx[0].Rdx = INFINITE as u64;
-                ctx[0].R8 = 0;
+                ctx[0].0.Rip = wait_for_single_object_ex as u64;
+                ctx[0].0.Rcx = event_start as u64;
+                ctx[0].0.Rdx = INFINITE as u64;
+                ctx[0].0.R8 = 0;
 
-                ctx[1].Rip = virtual_protect as *const () as u64;
-                ctx[1].Rcx = image_base as u64;
-                ctx[1].Rdx = image_size as u64;
-                ctx[1].R8 = PAGE_READWRITE as u64;
-                ctx[1].R9 = &mut value as *mut _ as u64;
+                ctx[1].0.Rip = virtual_protect as u64;
+                ctx[1].0.Rcx = image_base as u64;
+                ctx[1].0.Rdx = image_size as u64;
+                ctx[1].0.R8 = PAGE_READWRITE as u64;
+                ctx[1].0.R9 = &mut value as *mut _ as u64;
 
-                ctx[2].Rip = systemfunction032 as *const () as u64;
-                ctx[2].Rcx = &mut image as *mut _ as u64;
-                ctx[2].Rdx = &mut key_buffer as *mut _ as u64;
+                ctx[2].0.Rip = systemfunction032 as u64;
+                ctx[2].0.Rcx = &mut image as *mut _ as u64;
+                ctx[2].0.Rdx = &mut key_buffer as *mut _ as u64;
 
-                ctx[3].Rip = wait_for_single_object_ex as *const () as u64;
-                ctx[3].Rcx = GetCurrentProcess() as u64;
-                ctx[3].Rdx = time as u64;
-                ctx[3].R8 = 0;
+                ctx[3].0.Rip = wait_for_single_object_ex as u64;
+                ctx[3].0.Rcx = GetCurrentProcess() as u64;
+                ctx[3].0.Rdx = time as u64;
+                ctx[3].0.R8 = 0;
 
-                ctx[4].Rip = systemfunction032 as *const () as u64;
-                ctx[4].Rcx = &mut image as *mut _ as u64;
-                ctx[4].Rdx = &mut key_buffer as *mut _ as u64;
+                ctx[4].0.Rip = systemfunction032 as u64;
+                ctx[4].0.Rcx = &mut image as *mut _ as u64;
+                ctx[4].0.Rdx = &mut key_buffer as *mut _ as u64;
 
-                ctx[5].Rip = virtual_protect as *const () as u64;
-                ctx[5].Rcx = image_base as u64;
-                ctx[5].Rdx = image_size as u64;
-                ctx[5].R8 = PAGE_EXECUTE_READ as u64;
-                ctx[5].R9 = &mut value as *mut _ as u64;
+                ctx[5].0.Rip = virtual_protect as u64;
+                ctx[5].0.Rcx = image_base as u64;
+                ctx[5].0.Rdx = image_size as u64;
+                ctx[5].0.R8 = PAGE_EXECUTE_READWRITE as u64;
+                ctx[5].0.R9 = &mut value as *mut _ as u64;
 
-                ctx[6].Rip = set_event as *const () as u64;
-                ctx[6].Rcx = event_end as u64;
+                ctx[6].0.Rip = set_event as u64;
+                ctx[6].0.Rcx = event_end as u64;
 
                 for i in 0..7 {
                     delay += 100;
@@ -224,17 +226,27 @@ fn ekko(time: u32) {
                         &mut ctx[i] as *mut _ as *const _,
                         delay,
                         0,
-                        WT_EXECUTEINTIMERTHREAD,
+                        WT_EXECUTEINTIMERTHREAD | WT_EXECUTEONLYONCE,
                     )) {
+                        println!("[-] RtlCreateTimer failed for gadget {}", i);
                         return;
                     }
                 }
 
-                println!("[+] Sleeping for {} milliseconds", time);
-                NtSignalAndWaitForSingleObject(event_start, event_end, 0, null_mut());
+                if !nt_success(NtSignalAndWaitForSingleObject(
+                    event_start,
+                    event_end,
+                    0,
+                    null_mut(),
+                )) {
+                    println!("[-] Failed to wait for event end");
+                    return;
+                }
                 println!("[+] Finished sleeping for {} milliseconds", time);
             }
         }
+
+        println!();
 
         if queue != null_mut() {
             RtlDeleteTimerQueue(queue);
