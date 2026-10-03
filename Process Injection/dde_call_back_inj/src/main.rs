@@ -1,28 +1,16 @@
-use std::{
-    mem::{transmute, zeroed},
-    num::FpCategory::Zero,
-    ptr::{null, null_mut},
-    time::Instant,
-};
+use std::{mem::zeroed, ptr::null_mut};
 
-use windows_sys::{
-    Win32::{
-        Foundation::CloseHandle,
-        System::{
-            DataExchange::{
-                APPCLASS_STANDARD, APPCMD_FILTERINITS, CONVINFO, CP_WINANSI, DMLERR_ADVACKTIMEOUT,
-                DMLERR_NO_ERROR, DdeConnectList, DdeDisconnectList, DdeGetLastError,
-                DdeInitializeA, DdeQueryConvInfo, DdeQueryNextServer, DdeQueryStringA, HCONV,
-                HCONVLIST, HSZ, QID_SYNC,
-            },
-            Threading::{
-                OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameA,
-                QueryFullProcessImageNameW,
-            },
+use windows_sys::Win32::{
+    Foundation::CloseHandle,
+    System::{
+        DataExchange::{
+            APPCLASS_STANDARD, APPCMD_FILTERINITS, CONVINFO, CP_WINANSI, DMLERR_NO_ERROR,
+            DdeConnectList, DdeDisconnectList, DdeGetLastError, DdeInitializeA, DdeQueryConvInfo,
+            DdeQueryNextServer, DdeQueryStringA, HCONV, HSZ, QID_SYNC,
         },
-        UI::WindowsAndMessaging::GetWindowThreadProcessId,
+        Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameA},
     },
-    core::{PSTR, PWSTR},
+    UI::WindowsAndMessaging::GetWindowThreadProcessId,
 };
 
 fn hsz_to_string(instance_id: u32, hsz: HSZ) -> String {
@@ -35,8 +23,8 @@ fn hsz_to_string(instance_id: u32, hsz: HSZ) -> String {
         if len == 0 {
             return String::new();
         }
-        let mut buffer = vec![0; len as usize];
-        if DdeQueryStringA(instance_id, hsz, buffer.as_mut_ptr(), len, CP_WINANSI) == 0 {
+        let mut buffer = vec![0; len as usize + 1];
+        if DdeQueryStringA(instance_id, hsz, buffer.as_mut_ptr(), len + 1, CP_WINANSI) == 0 {
             println!(
                 "[-] DdeQueryStringA failed: {}",
                 DdeGetLastError(instance_id)
@@ -81,7 +69,7 @@ fn get_proc_name(pid: u32) -> String {
     }
 }
 
-fn main() {
+fn enum_dde() {
     unsafe {
         let mut instance_id: u32 = 0;
         let result = DdeInitializeA(
@@ -96,8 +84,7 @@ fn main() {
             return;
         }
 
-        let mut hlist = zeroed::<HCONVLIST>();
-        hlist = DdeConnectList(instance_id, null_mut(), null_mut(), null_mut(), null_mut());
+        let hlist = DdeConnectList(instance_id, null_mut(), null_mut(), null_mut(), null_mut());
 
         if hlist.is_null() {
             println!("[-] No DDE Servers found: {}", DdeGetLastError(instance_id));
@@ -140,5 +127,26 @@ fn main() {
         }
 
         DdeDisconnectList(hlist);
+    }
+}
+
+fn main() {
+    let args = std::env::args().collect::<Vec<String>>();
+
+    if args.len() < 2 {
+        println!("Usage: {} <command>", args[0]);
+        println!("Commands:");
+        println!("  enum_dde - Enumerate DDE servers");
+        return;
+    }
+
+    match args[1].as_str() {
+        "enum_dde" => enum_dde(),
+        _ => {
+            println!("Unknown command: {}", args[1]);
+            println!("Usage: {} <command>", args[0]);
+            println!("Commands:");
+            println!("  enum_dde - Enumerate DDE servers");
+        }
     }
 }
