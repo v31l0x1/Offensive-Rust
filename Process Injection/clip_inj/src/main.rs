@@ -7,13 +7,9 @@ use windows_sys::Win32::{
     Foundation::CloseHandle,
     System::{
         Diagnostics::Debug::WriteProcessMemory,
-        Memory::{
-            MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, PAGE_READWRITE, VirtualAllocEx,
-            VirtualProtectEx,
-        },
+        Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READ, PAGE_READWRITE, VirtualAllocEx},
         Threading::{
-            OpenProcess, PF_RDPID_INSTRUCTION_AVAILABLE, PROCESS_QUERY_INFORMATION,
-            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ,
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ,
             PROCESS_VM_WRITE, QueryFullProcessImageNameA,
         },
     },
